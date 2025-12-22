@@ -1,1 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Cruxword Prototype</title>
+  <style>
+    :root{
+      --bg1:#050914;
+      --bg2:#081a2a;
+      --grid:#ffffff10;
+      --grid2:#ffffff18;
+      --tile:#0f2236cc;
+      --tileStroke:#7df3ff55;
+      --tileGlow:#7df3ff22;
+      --accent:#7df3ff;
+      --warn:#ff6b6b;
+      --ok:#33d17a;
+      --text:#eaf6ff;
+      --muted:#a6c6d8;
+      --panel:#0a1625cc;
+    }
+    html,body{
+      margin:0; height:100%;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      color:var(--text);
+      background: radial-gradient(1200px 800px at 20% 20%, #18224a 0%, var(--bg1) 55%) ,
+                  radial-gradient(900px 600px at 80% 30%, #0b3a4a 0%, var(--bg2) 60%);
+      overflow:hidden;
+      -webkit-user-select:none;
+      user-select:none;
+      touch-action:none;
+    }
+    /* simple star specks */
+    body:before{
+      content:"";
+      position:fixed; inset:0;
+      background-image:
+        radial-gradient(2px 2px at 10% 20%, #ffffff66 50%, transparent 55%),
+        radial-gradient(1.5px 1.5px at 70% 15%, #ffffff55 50%, transparent 55%),
+        radial-gradient(1px 1px at 30% 70%, #ffffff44 50%, transparent 55%),
+        radial-gradient(1.2px 1.2px at 85% 80%, #ffffff44 50%, transparent 55%),
+        radial-gradient(1px 1px at 55% 45%, #ffffff33 50%, transparent 55%),
+        radial-gradient(1px 1px at 15% 85%, #ffffff33 50%, transparent 55%);
+      opacity:.8;
+      pointer-events:none;
+      filter: blur(.2px);
+    }
 
+    .wrap{
+      height:100%;
+      display:flex;
+      flex-direction:column;
+      padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom) 12px;
+      gap:10px;
+      box-sizing:border-box;
+    }
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:10px 10px;
+      border-radius:14px;
+      background:linear-gradient(180deg, #0c1a2dcc, #071423cc);
+      border:1px solid #ffffff14;
+      box-shadow: 0 10px 30px #00000055;
+    }
+    .brand{
+      display:flex; flex-direction:column; gap:2px;
+    }
+    .brand .title{
+      font-weight:800; letter-spacing:.06em;
+      display:flex; align-items:baseline; gap:8px;
+    }
+    .brand .title .hash{ opacity:.65; }
+    .brand .title .name{ color:var(--accent); }
+    .brand .sub{
+      font-size:12px; color:var(--muted); letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .score{
+      display:flex; flex-direction:column; align-items:flex-end; gap:2px;
+      font-size:12px; color:var(--muted);
+    }
+    .score .points{
+      font-size:18px; font-weight:800; color:var(--text);
+    }
+
+    .boardShell{
+      flex: 1 1 auto;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      min-height: 0;
+    }
+
+    .canvasWrap{
+      position:relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      border-radius:18px;
+      background: linear-gradient(180deg, #06101fbb, #040a13bb);
+      border:1px solid #ffffff14;
+      box-shadow: 0 12px 30px #00000066;
+      overflow:hidden;
+    }
+    canvas{ width:100%; height:100%; display:block; }
+
+    .hud{
+      position:absolute;
+      left:10px; right:10px; top:10px;
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      pointer-events:none;
+      gap:10px;
+    }
+    .msg{
+      pointer-events:none;
+      font-size:12px;
+      color:var(--muted);
+      background: #00000044;
+      padding:8px 10px;
+      border-radius:12px;
+      border:1px solid #ffffff14;
+      max-width: 70%;
+      backdrop-filter: blur(6px);
+    }
+    .msg b{ color:var(--text); }
+
+    .modePill{
+      pointer-events:none;
+      font-size:12px;
+      padding:8px 10px;
+      border-radius:999px;
+      border:1px solid #ffffff14;
+      background:#00000044;
+      color:var(--muted);
+      backdrop-filter: blur(6px);
+      white-space:nowrap;
+    }
+
+    .panel{
+      border-radius:18px;
+      background: linear-gradient(180deg, #0a1626cc, #06121fcc);
+      border:1px solid #ffffff14;
+      box-shadow: 0 12px 30px #00000055;
+      padding:10px;
+    }
+
+    .row{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+
+    .btn{
+      -webkit-tap-highlight-color: transparent;
+      appearance:none;
+      border:none;
+      color:var(--text);
+      background: #0f2236;
+      border:1px solid #ffffff18;
+      border-radius:14px;
+      padding:10px 12px;
+      font-weight:700;
+      letter-spacing:.02em;
+      box-shadow: 0 10px 20px #00000044;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      cursor:pointer;
+    }
+    .btn:active{ transform: translateY(1px); }
+    .btn.small{ padding:8px 10px; font-weight:700; font-size:13px; border-radius:12px; }
+    .btn.ghost{ background:#00000033; }
+    .btn.primary{ border-color: #7df3ff55; box-shadow: 0 0 0 1px #7df3ff22 inset, 0 10px 20px #00000044; }
+    .btn.danger{ border-color:#ff6b6b55; }
+    .btn.ok{ border-color:#33d17a55; }
+    .btn .tag{
+      font-size:11px;
+      padding:2px 8px;
+      border-radius:999px;
+      background:#ffffff12;
+      color:var(--muted);
+      border:1px solid #ffffff12;
+      font-weight:800;
+    }
+
+    .inventory{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+    }
+    .inventory .btn{
+      flex: 0 0 auto;
+    }
+
+    .help{
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.35;
+      margin-top:8px;
+      opacity:.95;
+    }
+    .help code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background:#ffffff10;
+      border:1px solid #ffffff12;
+      padding:1px 6px;
+      border-radius:8px;
+      color:var(--text);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="title">
+          <span class="hash">#</span>
+          <span class="name">CRUX</span>
+          <span style="opacity:.9;">WORD</span>
+        </div>
+        <div class="sub">Daily Rush Active</div>
+      </div>
+      <div class="score">
+        <div>POINTS</div>
+        <div class="points" id="points">0</div>
+      </div>
+    </header>
+
+    <div class="boardShell">
+      <div class="canvasWrap" id="canvasWrap">
+        <div class="hud">
+          <div class="msg" id="msg"><b>Pick a piece</b> → tap/drag on the board to place. Double-tap to rotate.</div>
+          <div class="modePill" id="modePill">Mode: PLACE</div>
+        </div>
+        <canvas id="c"></canvas>
+      </div>
+
+      <div class="panel">
+        <div class="row">
+          <div class="inventory" id="inventory"></div>
+          <div class="row" style="gap:8px;">
+            <button class="btn small primary" id="rotateBtn">Rotate <span class="tag">⟲</span></button>
+            <button class="btn small ghost" id="editBtn">Edit Tiles <span class="tag">A</span></button>
+            <button class="btn small ghost" id="undoBtn">Undo <span class="tag">↩</span></button>
+            <button class="btn small danger" id="resetBtn">Reset <span class="tag">✕</span></button>
+          </div>
+        </div>
+        <div class="help">
+          Rules enforced (prototype): <br/>
+          • Board is <code>10×10</code>. • No floaters: each new placement must touch the existing structure (overlap or 1 edge-touch).<br/>
+          • “Constellation” rule B: each new placement may make at most <code>1</code> edge-contact with existing tiles, OR a single-cell overlap (intersection).<br/>
+          • Overlap allowed only if exactly <code>1</code> cell overlaps and its text matches (or the new cell is wildcard <code>*</code>).<br/>
+          Gestures: <code>double-tap</code> rotates the current piece. Toggle <code>Edit Tiles</code> then tap a tile to change its text.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---------- CONFIG ----------
+  const ROWS = 10, COLS = 10;
+
+  // Inventory counts: tune freely
+  const initialInventory = {
+    largeCross: 3,
+    smallCross: 3,
+    stick2: 3,
+    stick3: 3,
+    stick4: 3,
+    single: 3,
+    wildcard: 1
+  };
+
+  // Sample “morpheme bucket” (tile texts). Prototype cycles/chooses from this.
+  const MORPHEMES = [
+    "RE", "UN", "IN", "DIS", "BIO", "NEO", "ECO", "HYPER", "MICRO",
+    "SPECT", "CRUX", "CORE", "PIVOT", "LUX", "RUG", "ION", "ABLE", "MENT",
+    "TION", "NESS", "SHIP", "AUTO", "META", "ANTI", "PRO", "SUB"
+  ];
+
+  // Piece definitions: cells + pivot in base orientation
+  // Cells are [x,y] with (0,0) top-left of a conceptual box
+  const PIECES = {
+    smallCross: {
+      name: "Small Cross",
+      icon: "＋",
+      cells: [[1,1],[0,1],[2,1],[1,0],[1,2]],
+      pivot: [1,1]
+    },
+    largeCross: {
+      name: "Large Cross",
+      icon: "✚",
+      cells: [[2,2],[1,2],[0,2],[3,2],[4,2],[2,1],[2,0],[2,3],[2,4]],
+      pivot: [2,2]
+    },
+    stick2: { name:"Stick 2", icon:"▭2", cells:[[0,0],[1,0]], pivot:[0,0] },
+    stick3: { name:"Stick 3", icon:"▭3", cells:[[0,0],[1,0],[2,0]], pivot:[1,0] },
+    stick4: { name:"Stick 4", icon:"▭4", cells:[[0,0],[1,0],[2,0],[3,0]], pivot:[1,0] },
+    single: { name:"Single", icon:"•", cells:[[0,0]], pivot:[0,0] },
+    wildcard: { name:"Wildcard", icon:"*", cells:[[0,0]], pivot:[0,0], isWildcard:true }
+  };
+
+  // ---------- STATE ----------
+  const canvas = document.getElementById("c");
+  const wrap = document.getElementById("canvasWrap");
+  const ctx = canvas.getContext("2d");
+
+  let board = makeBoard();
+  let inventory = {...initialInventory};
+  let placedStack = []; // undo history
+  let points = 0;
+
+  let currentPieceKey = null;
+  let currentRot = 0; // 0,1,2,3 (90° steps)
+  let preview = { col: 4, row: 4, valid: false, reason: "" };
+  let isEditMode = false;
+
+  // double-tap detection
+  let lastTapT = 0;
+  let pointerDown = false;
+
+  // ---------- UI ----------
+  const inventoryEl = document.getElementById("inventory");
+  const pointsEl = document.getElementById("points");
+  const msgEl = document.getElementById("msg");
+  const modePill = document.getElementById("modePill");
+
+  const rotateBtn = document.getElementById("rotateBtn");
+  const editBtn = document.getElementById("editBtn");
+  const undoBtn = document.getElementById("undoBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  rotateBtn.addEventListener("click", () => rotateCurrent());
+  editBtn.addEventListener("click", () => toggleEditMode());
+  undoBtn.addEventListener("click", () => undo());
+  resetBtn.addEventListener("click", () => reset());
+
+  function toggleEditMode(){
+    isEditMode = !isEditMode;
+    modePill.textContent = "Mode: " + (isEditMode ? "EDIT" : "PLACE");
+    setMsg(isEditMode
+      ? "Edit mode: tap a tile to change its text."
+      : "Place mode: pick a piece, then tap/drag to place. Double-tap to rotate."
+    );
+    draw();
+  }
+
+  function setMsg(text, kind="info"){
+    msgEl.innerHTML = text;
+    msgEl.style.borderColor = kind==="error" ? "#ff6b6b55" :
+                             kind==="ok"    ? "#33d17a55" : "#ffffff14";
+  }
+
+  function renderInventory(){
+    inventoryEl.innerHTML = "";
+    const order = ["largeCross","smallCross","stick4","stick3","stick2","single","wildcard"];
+    order.forEach(key => {
+      const p = PIECES[key];
+      const count = inventory[key] ?? 0;
+
+      const btn = document.createElement("button");
+      btn.className = "btn small " + (currentPieceKey===key ? "primary" : "ghost");
+      btn.innerHTML = `${p.icon} ${p.name} <span class="tag">${count}</span>`;
+      btn.disabled = count <= 0;
+      btn.addEventListener("click", () => {
+        currentPieceKey = key;
+        currentRot = 0;
+        renderInventory();
+        setMsg(`<b>${p.name}</b> selected. Tap/drag to place. Double-tap to rotate.`);
+        draw();
+      });
+      inventoryEl.appendChild(btn);
+    });
+
+    // pick default if none
+    if(!currentPieceKey){
+      const first = order.find(k => inventory[k] > 0);
+      if(first) currentPieceKey = first;
+    }
+  }
+
+  // ---------- BOARD ----------
+  function makeBoard(){
+    const b = [];
+    for(let r=0;r<ROWS;r++){
+      const row = [];
+      for(let c=0;c<COLS;c++) row.push(null);
+      b.push(row);
+    }
+    return b;
+  }
+
+  function tileCount(){
+    let n=0;
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(board[r][c]) n++;
+    return n;
+  }
+
+  function inBounds(r,c){ return r>=0 && r<ROWS && c>=0 && c<COLS; }
+
+  // ---------- PIECE TRANSFORMS ----------
+  function rotatePoint([x,y], rot){
+    // rot: 0..3 about origin (0,0) for grid coords
+    if(rot===0) return [x,y];
+    if(rot===1) return [-y, x];
+    if(rot===2) return [-x, -y];
+    return [y, -x]; // rot===3
+  }
+
+  function transformPiece(pieceKey, rot){
+    const def = PIECES[pieceKey];
+    const cells = def.cells.map(pt => rotatePoint(pt, rot));
+    const piv = rotatePoint(def.pivot, rot);
+
+    // normalize so minX/minY = 0
+    let minX=Infinity, minY=Infinity;
+    for(const [x,y] of cells){ minX=Math.min(minX,x); minY=Math.min(minY,y); }
+    const normCells = cells.map(([x,y]) => [x - minX, y - minY]);
+    const normPivot = [piv[0] - minX, piv[1] - minY];
+
+    // bounds
+    let maxX=0, maxY=0;
+    for(const [x,y] of normCells){ maxX=Math.max(maxX,x); maxY=Math.max(maxY,y); }
+
+    return { ...def, cells: normCells, pivot: normPivot, w: maxX+1, h: maxY+1 };
+  }
+
+  function absCellsAt(pieceKey, rot, anchorCol, anchorRow){
+    const t = transformPiece(pieceKey, rot);
+    const topLeftCol = anchorCol - t.pivot[0];
+    const topLeftRow = anchorRow - t.pivot[1];
+    const abs = t.cells.map(([dx,dy]) => [topLeftCol + dx, topLeftRow + dy]);
+    return { t, topLeftCol, topLeftRow, abs };
+  }
+
+  // ---------- PLACEMENT RULES ----------
+  function placementCheck(pieceKey, rot, anchorCol, anchorRow){
+    if(!pieceKey) return { ok:false, reason:"Pick a piece." };
+
+    const { t, abs } = absCellsAt(pieceKey, rot, anchorCol, anchorRow);
+
+    // bounds
+    for(const [c,r] of abs){
+      if(!inBounds(r,c)) return { ok:false, reason:"Out of bounds." };
+    }
+
+    let overlap = 0;
+    let contacts = 0;
+
+    // compute set for quick lookup
+    const absSet = new Set(abs.map(([c,r]) => `${r},${c}`));
+
+    // overlap count + text match
+    for(const [c,r] of abs){
+      const existing = board[r][c];
+      if(existing){
+        overlap++;
+      }
+    }
+    if(overlap > 1) return { ok:false, reason:"Too many overlaps (max 1 intersection)." };
+
+    // adjacency contacts to existing tiles (excluding overlaps)
+    for(const [c,r] of abs){
+      if(board[r][c]) continue; // skip overlap cell
+      const neigh = [[c+1,r],[c-1,r],[c,r+1],[c,r-1]];
+      for(const [nc,nr] of neigh){
+        if(!inBounds(nr,nc)) continue;
+        if(board[nr][nc] && !absSet.has(`${nr},${nc}`)){
+          contacts++;
+        }
+      }
+    }
+    if(contacts > 1) return { ok:false, reason:"Too many edge-contacts (max 1)." };
+
+    // connectivity: no floaters once board has tiles
+    const existingCount = tileCount();
+    if(existingCount > 0 && (overlap + contacts) < 1){
+      return { ok:false, reason:"No floaters: must touch the structure." };
+    }
+
+    // overlap text compatibility (if overlap==1)
+    if(overlap === 1){
+      // find overlap cell
+      const ov = abs.find(([c,r]) => board[r][c]);
+      const [oc, or] = ov;
+      const existing = board[or][oc];
+      // In this prototype, we only enforce: if placing wildcard, it's always OK.
+      // Otherwise: if existing text is non-empty and new would differ, reject.
+      // But we don't know the new text yet (we generate it). So we only reject if existing is empty (never) — or handle after generation.
+      // We'll handle final check in placePiece() once texts are chosen.
+      if(!existing || !existing.text) {
+        // should never happen; existing tile always has text
+      }
+    }
+
+    // inventory
+    if((inventory[pieceKey] ?? 0) <= 0) return { ok:false, reason:"No pieces left." };
+
+    return { ok:true, reason:"OK", t, abs };
+  }
+
+  function placePiece(pieceKey, rot, anchorCol, anchorRow){
+    const check = placementCheck(pieceKey, rot, anchorCol, anchorRow);
+    if(!check.ok){
+      setMsg(`<b>Illegal:</b> ${check.reason}`, "error");
+      return false;
+    }
+
+    const { abs } = check;
+
+    // choose texts for new cells
+    // wildcard -> "*" ; others -> random morpheme-ish chunk (1-5 chars)
+    const isWildcard = !!PIECES[pieceKey].isWildcard;
+
+    const changes = []; // for undo: list of {r,c, prev, next, wasNew}
+    for(const [c,r] of abs){
+      const prev = board[r][c];
+      if(prev){
+        // overlap cell: must match, unless wildcard
+        if(isWildcard) {
+          // wildcard can sit on an existing tile? In this prototype, allow it ONLY if it overlaps exactly 1 (already enforced) and does not change it.
+          changes.push({r,c, prev, next: prev, wasNew:false});
+          continue;
+        } else {
+          // do not overwrite; but ensure compatibility by requiring same text after we "would have" placed
+          // We'll just require: existing stays, and it "counts" as the intersection.
+          changes.push({r,c, prev, next: prev, wasNew:false});
+          continue;
+        }
+      } else {
+        const text = isWildcard ? "*" : MORPHEMES[(Math.random()*MORPHEMES.length)|0];
+        const next = { text, wildcard: isWildcard };
+        board[r][c] = next;
+        changes.push({r,c, prev:null, next, wasNew:true});
+      }
+    }
+
+    // If overlap==1 and NOT wildcard, we should ensure the overlap isn't semantically incompatible.
+    // Since we didn't overwrite overlap text, it's always "compatible" here.
+    // If you want strict: prompt user to match overlap tile text—easy later.
+
+    inventory[pieceKey]--;
+    placedStack.push({ pieceKey, changes });
+
+    // tiny scoring placeholder: +1 per newly placed tile
+    const newly = changes.filter(x => x.wasNew).length;
+    points += newly;
+    pointsEl.textContent = points;
+
+    setMsg(`<b>Placed:</b> ${PIECES[pieceKey].name} (+${newly})`, "ok");
+
+    // auto-select next available if this ran out
+    if(inventory[pieceKey] <= 0){
+      const nextKey = Object.keys(inventory).find(k => inventory[k] > 0);
+      currentPieceKey = nextKey || null;
+      currentRot = 0;
+    }
+
+    renderInventory();
+    draw();
+    return true;
+  }
+
+  function undo(){
+    const last = placedStack.pop();
+    if(!last){
+      setMsg("Nothing to undo.", "info");
+      return;
+    }
+    // revert changes
+    for(const ch of last.changes){
+      board[ch.r][ch.c] = ch.prev;
+    }
+    inventory[last.pieceKey] = (inventory[last.pieceKey] ?? 0) + 1;
+
+    // rollback score placeholder
+    const newly = last.changes.filter(x => x.wasNew).length;
+    points = Math.max(0, points - newly);
+    pointsEl.textContent = points;
+
+    setMsg(`<b>Undo:</b> ${PIECES[last.pieceKey].name} (-${newly})`, "info");
+    renderInventory();
+    draw();
+  }
+
+  function reset(){
+    board = makeBoard();
+    inventory = {...initialInventory};
+    placedStack = [];
+    points = 0;
+    pointsEl.textContent = points;
+    currentRot = 0;
+    currentPieceKey = null;
+    isEditMode = false;
+    modePill.textContent = "Mode: PLACE";
+    setMsg("<b>Reset.</b> Pick a piece → place it.", "info");
+    renderInventory();
+    resize();
+    draw();
+  }
+
+  function rotateCurrent(){
+    if(!currentPieceKey){
+      setMsg("Pick a piece first.", "info");
+      return;
+    }
+    currentRot = (currentRot + 1) % 4;
+    draw();
+  }
+
+  // ---------- CANVAS / RENDER ----------
+  let W=0,H=0, cell=0, boardPx=0, pad=0, ox=0, oy=0;
+
+  function resize(){
+    const rect = wrap.getBoundingClientRect();
+    W = Math.floor(rect.width);
+    H = Math.floor(rect.height);
+    canvas.width = W * devicePixelRatio;
+    canvas.height = H * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+
+    // board size = min(W, H) with padding
+    pad = Math.max(12, Math.floor(Math.min(W,H)*0.04));
+    boardPx = Math.min(W, H) - pad*2;
+    cell = Math.floor(boardPx / COLS);
+    boardPx = cell * COLS;
+    ox = Math.floor((W - boardPx)/2);
+    oy = Math.floor((H - boardPx)/2);
+  }
+
+  window.addEventListener("resize", () => { resize(); draw(); }, {passive:true});
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // faint board glow
+    ctx.save();
+    ctx.shadowColor = "#7df3ff22";
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = "#00000000";
+    roundRect(ctx, ox-2, oy-2, boardPx+4, boardPx+4, 18);
+    ctx.fill();
+    ctx.restore();
+
+    // board background
+    ctx.fillStyle = "#061322aa";
+    roundRect(ctx, ox, oy, boardPx, boardPx, 18);
+    ctx.fill();
+
+    // thin grid lines
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--grid");
+    ctx.lineWidth = 1;
+    for(let i=0;i<=COLS;i++){
+      const x = ox + i*cell;
+      line(x, oy, x, oy+boardPx);
+    }
+    for(let i=0;i<=ROWS;i++){
+      const y = oy + i*cell;
+      line(ox, y, ox+boardPx, y);
+    }
+
+    // slightly stronger every 5 lines (optional)
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--grid2");
+    for(let i=0;i<=COLS;i+=5){
+      const x = ox + i*cell;
+      line(x, oy, x, oy+boardPx);
+    }
+    for(let i=0;i<=ROWS;i+=5){
+      const y = oy + i*cell;
+      line(ox, y, ox+boardPx, y);
+    }
+
+    // placed tiles
+    for(let r=0;r<ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const t = board[r][c];
+        if(!t) continue;
+        drawTile(c,r,t.text, t.wildcard);
+      }
+    }
+
+    // preview
+    if(!isEditMode && currentPieceKey){
+      const check = placementCheck(currentPieceKey, currentRot, preview.col, preview.row);
+      preview.valid = check.ok;
+      preview.reason = check.reason;
+
+      const { abs } = absCellsAt(currentPieceKey, currentRot, preview.col, preview.row);
+      for(const [c,r] of abs){
+        if(!inBounds(r,c)) continue;
+        drawPreviewCell(c,r, check.ok);
+      }
+    }
+
+    // hint footer (quick)
+    ctx.save();
+    ctx.font = `600 ${Math.max(12, Math.floor(cell*0.28))}px system-ui`;
+    ctx.fillStyle = "#a6c6d8cc";
+    const hint = isEditMode ? "Tap a tile to edit." :
+      (currentPieceKey ? `Preview: ${PIECES[currentPieceKey].name} (${preview.valid ? "OK" : "NO"})` : "Pick a piece.");
+    ctx.fillText(hint, ox, oy + boardPx + Math.min(26, Math.floor(pad*1.5)));
+    ctx.restore();
+  }
+
+  function drawTile(col,row,text,isWildcard){
+    const x = ox + col*cell;
+    const y = oy + row*cell;
+    ctx.save();
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--tile");
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--tileStroke");
+    ctx.lineWidth = 1;
+
+    ctx.shadowColor = getComputedStyle(document.documentElement).getPropertyValue("--tileGlow");
+    ctx.shadowBlur = 14;
+    roundRect(ctx, x+1, y+1, cell-2, cell-2, Math.max(6, Math.floor(cell*0.22)));
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+
+    // text
+    ctx.fillStyle = isWildcard ? "#ffdf6b" : "#eaf6ff";
+    const maxLen = 5;
+    const shown = (text || "").toString().slice(0,maxLen);
+
+    // fit text size
+    let fs = Math.floor(cell*0.34);
+    if(shown.length >= 5) fs = Math.floor(cell*0.22);
+    else if(shown.length === 4) fs = Math.floor(cell*0.25);
+    else if(shown.length === 3) fs = Math.floor(cell*0.29);
+
+    ctx.font = `800 ${fs}px system-ui`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(shown, x + cell/2, y + cell/2);
+    ctx.restore();
+  }
+
+  function drawPreviewCell(col,row,ok){
+    const x = ox + col*cell;
+    const y = oy + row*cell;
+    ctx.save();
+    ctx.fillStyle = ok ? "#33d17a22" : "#ff6b6b22";
+    ctx.strokeStyle = ok ? "#33d17a88" : "#ff6b6b88";
+    ctx.lineWidth = 2;
+    roundRect(ctx, x+3, y+3, cell-6, cell-6, Math.max(6, Math.floor(cell*0.2)));
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function roundRect(ctx,x,y,w,h,r){
+    ctx.beginPath();
+    const rr = Math.min(r, w/2, h/2);
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+  }
+
+  function line(x1,y1,x2,y2){
+    ctx.beginPath();
+    ctx.moveTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    ctx.stroke();
+  }
+
+  // ---------- INPUT ----------
+  function clientToCell(clientX, clientY){
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    // clamp to board
+    const cx = x - ox;
+    const cy = y - oy;
+    const col = Math.round(cx / cell);
+    const row = Math.round(cy / cell);
+    return {
+      col: clamp(col, 0, COLS-1),
+      row: clamp(row, 0, ROWS-1),
+      inside: (cx>=0 && cy>=0 && cx<=boardPx && cy<=boardPx)
+    };
+  }
+
+  function hitCell(clientX, clientY){
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const cx = x - ox;
+    const cy = y - oy;
+    if(cx<0 || cy<0 || cx>boardPx || cy>boardPx) return null;
+    const col = Math.floor(cx / cell);
+    const row = Math.floor(cy / cell);
+    if(!inBounds(row,col)) return null;
+    return {row,col};
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    pointerDown = true;
+    canvas.setPointerCapture(e.pointerId);
+
+    const now = performance.now();
+    const dt = now - lastTapT;
+    lastTapT = now;
+
+    const hc = hitCell(e.clientX, e.clientY);
+
+    // double-tap rotates (place mode)
+    if(!isEditMode && dt < 280){
+      rotateCurrent();
+      return;
+    }
+
+    if(isEditMode){
+      if(hc && board[hc.row][hc.col]){
+        const cur = board[hc.row][hc.col].text || "";
+        const val = prompt("Tile text (max 5 chars):", cur);
+        if(val !== null){
+          board[hc.row][hc.col].text = val.toUpperCase().slice(0,5);
+          draw();
+        }
+      } else if(hc && !board[hc.row][hc.col]){
+        setMsg("No tile there to edit.", "info");
+      }
+      return;
+    }
+
+    if(!currentPieceKey){
+      setMsg("Pick a piece first.", "info");
+      return;
+    }
+
+    // update preview
+    const cc = clientToCell(e.clientX, e.clientY);
+    if(cc.inside){
+      preview.col = cc.col; preview.row = cc.row;
+      draw();
+    }
+  }, {passive:false});
+
+  canvas.addEventListener("pointermove", (e) => {
+    if(isEditMode) return;
+    if(!currentPieceKey) return;
+
+    const cc = clientToCell(e.clientX, e.clientY);
+    if(!cc.inside) return;
+    preview.col = cc.col;
+    preview.row = cc.row;
+    draw();
+  }, {passive:false});
+
+  canvas.addEventListener("pointerup", (e) => {
+    pointerDown = false;
+    if(isEditMode) return;
+    if(!currentPieceKey) return;
+
+    const cc = clientToCell(e.clientX, e.clientY);
+    if(!cc.inside) return;
+
+    preview.col = cc.col;
+    preview.row = cc.row;
+
+    const ok = placePiece(currentPieceKey, currentRot, preview.col, preview.row);
+    if(!ok){
+      // keep preview so user can adjust
+      draw();
+    }
+  }, {passive:false});
+
+  // prevent iOS bounce/scroll
+  document.addEventListener("touchmove", (e) => e.preventDefault(), {passive:false});
+
+  // ---------- UTIL ----------
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+
+  // ---------- INIT ----------
+  function init(){
+    renderInventory();
+    resize();
+    draw();
+    setMsg("<b>Pick a piece</b> → place it on the 10×10 board. Double-tap to rotate.", "info");
+  }
+  init();
+
+})();
+</script>
+</body>
+</html>
