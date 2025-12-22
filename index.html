@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Cruxword Prototype</title>
+  <style>
+    :root{
+      --bg1:#050814; --bg2:#0b1230;
+      --grid: rgba(255,255,255,.09);
+      --grid2: rgba(120,255,255,.16);
+      --tile: rgba(10, 20, 45, .85);
+      --tile2: rgba(35, 220, 220, .18);
+      --glow: rgba(90, 240, 255, .55);
+      --text: rgba(240, 250, 255, .95);
+      --muted: rgba(240, 250, 255, .6);
+      --bad: rgba(255, 80, 120, .85);
+      --ok: rgba(80, 255, 170, .85);
+    }
+    html,body{height:100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+    body{
+      background: radial-gradient(1200px 800px at 20% 10%, rgba(120,80,255,.28), transparent 55%),
+                  radial-gradient(900px 700px at 85% 35%, rgba(0,220,255,.18), transparent 55%),
+                  linear-gradient(180deg, var(--bg1), var(--bg2));
+      color: var(--text);
+      overflow:hidden;
+      touch-action: none;
+    }
+    /* subtle “constellation” specks */
+    body:before{
+      content:"";
+      position:fixed; inset:0;
+      background-image:
+        radial-gradient(circle at 10% 20%, rgba(255,255,255,.18) 0 1px, transparent 2px),
+        radial-gradient(circle at 30% 70%, rgba(255,255,255,.12) 0 1px, transparent 2px),
+        radial-gradient(circle at 70% 30%, rgba(255,255,255,.10) 0 1px, transparent 2px),
+        radial-gradient(circle at 85% 65%, rgba(255,255,255,.16) 0 1px, transparent 2px),
+        radial-gradient(circle at 55% 55%, rgba(255,255,255,.08) 0 1px, transparent 2px);
+      opacity:.9;
+      pointer-events:none;
+    }
+    .wrap{height:100%; display:flex; flex-direction:column;}
+    header{
+      padding:10px 12px 6px;
+      display:flex; align-items:flex-end; justify-content:space-between;
+      gap:10px;
+    }
+    .brand{
+      display:flex; flex-direction:column; gap:2px;
+    }
+    .brand .title{
+      font-weight:800; letter-spacing:.08em;
+      display:flex; align-items:baseline; gap:8px;
+    }
+    .brand .title span:nth-child(1){color: var(--text);}
+    .brand .title span:nth-child(2){color: rgba(140,120,255,.95); font-weight:900;}
+    .brand .sub{font-size:12px; color: var(--muted); letter-spacing:.06em;}
+    .score{
+      font-size:12px; color: var(--muted);
+      padding:8px 10px;
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:14px;
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 0 18px rgba(0,0,0,.35) inset;
+    }
+    main{flex:1; display:flex; flex-direction:column; gap:10px; padding:0 12px 12px;}
+    .boardCard{
+      flex: 1;
+      min-height: 0;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 0 24px rgba(0,0,0,.35) inset;
+      padding:10px;
+      display:flex; align-items:center; justify-content:center;
+    }
+    canvas{
+      width: 100%;
+      max-width: 520px;
+      aspect-ratio: 1/1;
+      border-radius:14px;
+      background: rgba(0,0,0,.12);
+      border:1px solid rgba(255,255,255,.08);
+      touch-action: none;
+    }
+    .panel{
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 0 24px rgba(0,0,0,.35) inset;
+      padding:10px;
+      display:flex; flex-direction:column; gap:10px;
+    }
+    .row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+    .hint{font-size:12px; color: var(--muted); line-height:1.25;}
+    .btn{
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(20,30,60,.55);
+      color: var(--text);
+      font-weight:700;
+      letter-spacing:.02em;
+      cursor:pointer;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active{transform: translateY(1px);}
+    .btn.primary{border-color: rgba(120,255,255,.22); box-shadow: 0 0 14px rgba(90,240,255,.12);}
+    .btn.warn{border-color: rgba(255,80,120,.25);}
+    .btn.small{padding:8px 10px; font-weight:700; font-size:13px;}
+    .badge{
+      font-size:12px; color: var(--muted);
+      padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.12);
+    }
+    .inv{display:flex; gap:8px; flex-wrap:wrap;}
+    .pieceBtn{
+      display:flex; align-items:center; justify-content:space-between; gap:8px;
+      min-width: 150px;
+    }
+    .pieceBtn b{font-weight:900;}
+    .pieceBtn .count{
+      font-variant-numeric: tabular-nums;
+      padding:4px 8px; border-radius:999px;
+      background: rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.10);
+      color: var(--text);
+    }
+    .status{
+      font-size:12px;
+      color: var(--muted);
+    }
+    .status.ok{color: var(--ok);}
+    .status.bad{color: var(--bad);}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="title"><span>CRUX</span><span>WORD</span></div>
+      <div class="sub">Daily Rush Active</div>
+    </div>
+    <div class="score">POINTS<br><b style="color:var(--text); font-size:18px;">0</b></div>
+  </header>
+
+  <main>
+    <div class="boardCard">
+      <canvas id="board" width="900" height="900" aria-label="Cruxword board"></canvas>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <div class="badge" id="modeBadge">Mode: PLACE</div>
+        <button class="btn small primary" id="rotateBtn">Rotate ⟲</button>
+        <button class="btn small" id="editBtn">Edit Tiles A</button>
+        <button class="btn small" id="undoBtn">Undo ↩</button>
+        <button class="btn small warn" id="resetBtn">Reset ✕</button>
+        <div class="status" id="status">Pick a piece → tap the board to place. Double-tap rotates.</div>
+      </div>
+
+      <div class="row">
+        <div class="hint">
+          Rules (prototype): Board is <b>10×10</b>. No floaters: after the first placement, each new piece must connect by <b>exactly 1</b> contact
+          (either <b>one</b> edge-touch OR a <b>single-cell</b> overlap). Overlap allowed only if the letter matches (or the new cell is <b>*</b>).
+        </div>
+      </div>
+
+      <div class="inv" id="inventory"></div>
+      <div class="hint">Tip: Tap <b>Edit Tiles</b>, then tap the ghost piece tiles on the board to set letters before placing.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+  // ---------- Core state ----------
+  const N = 10;
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const modeBadge = document.getElementById('modeBadge');
+
+  let grid = Array.from({length:N}, ()=> Array.from({length:N}, ()=> "")); // letters
+  let placed = 0; // number of occupied cells
+  let history = []; // snapshots
+
+  // UI modes
+  let editMode = false;
+
+  // Piece definition: list of relative coords from anchor (ax,ay).
+  const PIECES = {
+    BIG_CROSS: {name:"Big Cross (9)", coords:[[0,0],[1,0],[-1,0],[2,0],[-2,0],[0,1],[0,-1],[0,2],[0,-2]]},
+    SMALL_CROSS:{name:"Small Cross (5)", coords:[[0,0],[1,0],[-1,0],[0,1],[0,-1]]},
+    STICK2: {name:"Stick 2", coords:[[0,0],[1,0]]},
+    STICK3: {name:"Stick 3", coords:[[-1,0],[0,0],[1,0]]},
+    STICK4: {name:"Stick 4", coords:[[-1,0],[0,0],[1,0],[2,0]]},
+    STICK5: {name:"Stick 5", coords:[[-2,0],[-1,0],[0,0],[1,0],[2,0]]},
+    SINGLE: {name:"Single", coords:[[0,0]]},
+    WILD: {name:"Wildcard *", coords:[[0,0]], force:"*"},
+  };
+
+  // Inventory (tune later)
+  let inv = {
+    BIG_CROSS: 3,
+    SMALL_CROSS: 3,
+    STICK2: 3,
+    STICK3: 3,
+    STICK4: 3,
+    STICK5: 0,
+    SINGLE: 3,
+    WILD: 1
+  };
+
+  // Current piece instance (with per-cell letters)
+  let currentKey = null;
+  let currentRot = 0; // 0,1,2,3 quarter-turns
+  let currentLetters = new Map(); // key: "dx,dy" -> "A".."Z" or "*"
+
+  // Ghost (hover) anchor on board
+  let ghost = {x: Math.floor(N/2), y: Math.floor(N/2)};
+
+  // ---------- Helpers ----------
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const keyOf = (dx,dy) => `${dx},${dy}`;
+
+  function rotateCoord([x,y], r){
+    // rotate r times 90° clockwise around origin
+    r = ((r%4)+4)%4;
+    if(r===0) return [x,y];
+    if(r===1) return [y,-x];
+    if(r===2) return [-x,-y];
+    return [-y,x];
+  }
+
+  function getCurrentCoords(){
+    if(!currentKey) return [];
+    const base = PIECES[currentKey].coords;
+    return base.map(c => rotateCoord(c, currentRot));
+  }
+
+  function getLetterFor(dx,dy){
+    if(!currentKey) return "";
+    const force = PIECES[currentKey].force;
+    if(force) return force;
+    return currentLetters.get(keyOf(dx,dy)) || "";
+  }
+
+  function setLetterFor(dx,dy, val){
+    currentLetters.set(keyOf(dx,dy), val);
+  }
+
+  function occupiedCount(){
+    let c=0;
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(grid[y][x]) c++;
+    return c;
+  }
+
+  function snapshot(){
+    history.push({
+      grid: grid.map(row => row.slice()),
+      inv: {...inv},
+      placed: occupiedCount(),
+    });
+  }
+
+  function restoreSnap(s){
+    grid = s.grid.map(row => row.slice());
+    inv = {...s.inv};
+    placed = s.placed;
+    renderInventory();
+    draw();
+  }
+
+  function setStatus(msg, kind=""){
+    statusEl.textContent = msg;
+    statusEl.className = "status " + (kind||"");
+  }
+
+  function anyTilesPlaced(){
+    return occupiedCount() > 0;
+  }
+
+  // Count contacts for “Constellation Rule B”
+  function evaluatePlacement(anchorX, anchorY){
+    const coords = getCurrentCoords();
+    if(!coords.length) return {ok:false, reason:"Pick a piece first."};
+
+    // Build list of absolute cells for the piece (within bounds)
+    const cells = [];
+    for(const [dx,dy] of coords){
+      const x = anchorX + dx;
+      const y = anchorY + dy;
+      const letter = getLetterFor(dx,dy);
+      if(x<0||x>=N||y<0||y>=N) return {ok:false, reason:"Piece is out of bounds."};
+      if(!letter) return {ok:false, reason:"All piece tiles need letters (use Edit Tiles)."};
+      cells.push({x,y,dx,dy,letter});
+    }
+
+    // Count overlaps
+    let overlap = 0;
+    for(const c of cells){
+      const existing = grid[c.y][c.x];
+      if(existing){
+        overlap++;
+        const incoming = c.letter;
+        if(incoming !== "*" && incoming !== existing){
+          return {ok:false, reason:`Overlap letter mismatch at (${c.x+1},${c.y+1}).`};
+        }
+      }
+    }
+
+    // Count edge-adjacency contacts (exclude overlap cells).
+    let adjPairs = 0;
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+
+    // Create a quick set of new cells
+    const newSet = new Set(cells.map(c => `${c.x},${c.y}`));
+
+    for(const c of cells){
+      const hereOverlaps = !!grid[c.y][c.x];
+      if(hereOverlaps) continue; // overlap is already a "connection", don't count adjacency from this cell
+      for(const [dx,dy] of dirs){
+        const nx = c.x + dx, ny = c.y + dy;
+        if(nx<0||nx>=N||ny<0||ny>=N) continue;
+        // adjacency to existing tile only (not adjacency to tiles of the same new piece)
+        if(grid[ny][nx] && !newSet.has(`${nx},${ny}`)){
+          adjPairs++;
+        }
+      }
+    }
+
+    const connections = overlap + adjPairs;
+
+    if(!anyTilesPlaced()){
+      // first placement: must have 0 connections
+      if(connections !== 0) return {ok:false, reason:"First placement must not touch anything (board is empty)."};
+      return {ok:true, cells, overlap, adjPairs, connections};
+    } else {
+      // later placements: must have exactly 1 connection (no floaters AND max-1 contact)
+      if(connections === 0) return {ok:false, reason:"No floaters: must connect to existing tiles."};
+      if(connections > 1) return {ok:false, reason:`Too many connections (${connections}). Must be exactly 1.`};
+      return {ok:true, cells, overlap, adjPairs, connections};
+    }
+  }
+
+  function commitPlacement(anchorX, anchorY){
+    const ev = evaluatePlacement(anchorX, anchorY);
+    if(!ev.ok){
+      setStatus(ev.reason, "bad");
+      return false;
+    }
+    snapshot();
+
+    // apply letters
+    for(const c of ev.cells){
+      const incoming = c.letter === "*" ? grid[c.y][c.x] || "*" : c.letter;
+      // if overlap and incoming is "*" keep existing
+      if(grid[c.y][c.x]){
+        // already there; wildcard overlap is fine
+      } else {
+        grid[c.y][c.x] = incoming;
+      }
+    }
+
+    // decrement inventory
+    inv[currentKey] = Math.max(0, (inv[currentKey]||0) - 1);
+    if(inv[currentKey] === 0){
+      // auto-deselect if none left
+      currentKey = null;
+      currentLetters = new Map();
+      currentRot = 0;
+    } else {
+      // reset letters for next copy of same piece
+      currentLetters = new Map();
+      currentRot = 0;
+    }
+
+    renderInventory();
+    draw();
+    setStatus("Placed. Pick next piece.", "ok");
+    return true;
+  }
+
+  // ---------- Rendering ----------
+  function draw(){
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+
+    // grid geometry
+    const pad = 30;
+    const size = Math.min(w,h) - pad*2;
+    const cell = size / N;
+    const ox = (w - size)/2;
+    const oy = (h - size)/2;
+
+    // subtle grid lines
+    ctx.save();
+    ctx.translate(ox,oy);
+
+    // outer glow
+    ctx.strokeStyle = "rgba(90,240,255,.18)";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(-6,-6,size+12,size+12);
+
+    // grid
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+    ctx.lineWidth = 1;
+    for(let i=0;i<=N;i++){
+      const p = i*cell;
+      ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(size,p); ctx.stroke();
+    }
+
+    // tiles
+    for(let y=0;y<N;y++){
+      for(let x=0;x<N;x++){
+        const letter = grid[y][x];
+        if(!letter) continue;
+
+        const x0 = x*cell, y0 = y*cell;
+        // tile bg
+        ctx.fillStyle = "rgba(10,20,45,.80)";
+        roundRect(ctx, x0+2, y0+2, cell-4, cell-4, 10, true, false);
+
+        // tile outline
+        ctx.strokeStyle = "rgba(120,255,255,.18)";
+        ctx.lineWidth = 2;
+        roundRect(ctx, x0+2, y0+2, cell-4, cell-4, 10, false, true);
+
+        // letter
+        ctx.fillStyle = "rgba(240,250,255,.95)";
+        ctx.font = `800 ${Math.floor(cell*0.42)}px ui-sans-serif, system-ui`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(letter.toUpperCase(), x0 + cell/2, y0 + cell/2 + 2);
+      }
+    }
+
+    // ghost piece
+    if(currentKey){
+      const coords = getCurrentCoords();
+      const ok = evaluatePlacement(ghost.x, ghost.y).ok;
+      const ghostFill = ok ? "rgba(90,240,255,.18)" : "rgba(255,80,120,.18)";
+      const ghostStroke = ok ? "rgba(90,240,255,.45)" : "rgba(255,80,120,.55)";
+      for(const [dx,dy] of coords){
+        const gx = ghost.x + dx, gy = ghost.y + dy;
+        if(gx<0||gx>=N||gy<0||gy>=N) continue;
+        const x0 = gx*cell, y0 = gy*cell;
+
+        ctx.fillStyle = ghostFill;
+        roundRect(ctx, x0+3, y0+3, cell-6, cell-6, 10, true, false);
+
+        ctx.strokeStyle = ghostStroke;
+        ctx.lineWidth = 2;
+        roundRect(ctx, x0+3, y0+3, cell-6, cell-6, 10, false, true);
+
+        const letter = getLetterFor(dx,dy);
+        if(letter){
+          ctx.fillStyle = "rgba(240,250,255,.75)";
+          ctx.font = `800 ${Math.floor(cell*0.30)}px ui-sans-serif, system-ui`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(letter.toUpperCase(), x0 + cell/2, y0 + cell/2 + 1);
+        }
+      }
+    }
+
+    ctx.restore();
+
+    // mode badge
+    modeBadge.textContent = editMode ? "Mode: EDIT TILES" : "Mode: PLACE";
+  }
+
+  function roundRect(ctx, x, y, w, h, r, fill, stroke){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+    if(fill) ctx.fill();
+    if(stroke) ctx.stroke();
+  }
+
+  // ---------- Inventory UI ----------
+  const invEl = document.getElementById('inventory');
+
+  function renderInventory(){
+    invEl.innerHTML = "";
+    for(const k of Object.keys(inv)){
+      const count = inv[k];
+      const def = PIECES[k];
+      const btn = document.createElement('button');
+      btn.className = "btn pieceBtn " + (k===currentKey ? "primary" : "");
+      btn.disabled = (count<=0);
+      btn.innerHTML = `<span><b>${def.name}</b></span><span class="count">${count}</span>`;
+      btn.onclick = () => {
+        if(inv[k] <= 0) return;
+        currentKey = k;
+        currentRot = 0;
+        currentLetters = new Map();
+        // prefill wildcard
+        if(PIECES[k].force === "*"){
+          // nothing else needed
+        }
+        setStatus(`Selected: ${def.name}. ${editMode ? "Tap ghost tiles to set letters." : "Tap board to place. Double-tap rotates."}`);
+        draw();
+        renderInventory();
+      };
+      invEl.appendChild(btn);
+    }
+  }
+
+  // ---------- Input / gestures ----------
+  function getCellFromEvent(ev){
+    const rect = canvas.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (ev.clientY - rect.top) * (canvas.height / rect.height);
+
+    const pad = 30;
+    const size = Math.min(canvas.width, canvas.height) - pad*2;
+    const ox = (canvas.width - size)/2;
+    const oy = (canvas.height - size)/2;
+    const cell = size / N;
+
+    const gx = Math.floor((x - ox) / cell);
+    const gy = Math.floor((y - oy) / cell);
+    return {gx, gy, inside: gx>=0 && gx<N && gy>=0 && gy<N};
+  }
+
+  let lastTapTime = 0;
+
+  function rotate(){
+    if(!currentKey) return;
+    currentRot = (currentRot + 1) % 4;
+    draw();
+  }
+
+  function onPointerDown(ev){
+    ev.preventDefault();
+    const p = getCellFromEvent(ev);
+    if(!p.inside) return;
+    ghost.x = p.gx; ghost.y = p.gy;
+
+    const now = Date.now();
+    const isDoubleTap = (now - lastTapTime) < 280;
+    lastTapTime = now;
+
+    if(isDoubleTap){
+      rotate();
+      setStatus("Rotated.", "ok");
+      return;
+    }
+
+    if(!currentKey){
+      setStatus("Pick a piece first.", "bad");
+      draw();
+      return;
+    }
+
+    if(editMode){
+      // edit the tile within the ghost piece if user tapped a ghost tile
+      const coords = getCurrentCoords();
+      let hit = null;
+      for(const [dx,dy] of coords){
+        if(ghost.x + dx === p.gx && ghost.y + dy === p.gy){
+          hit = [dx,dy];
+          break;
+        }
+      }
+      if(!hit){
+        setStatus("Tap a ghost tile to set its letter.", "bad");
+        return;
+      }
+      const [dx,dy] = hit;
+      if(PIECES[currentKey].force){
+        setStatus("This piece is fixed (*).", "bad");
+        return;
+      }
+      const cur = getLetterFor(dx,dy);
+      const val = prompt("Enter a letter (A–Z) or * for wildcard:", (cur||"").toUpperCase());
+      if(val === null) return;
+      const cleaned = (val.trim().toUpperCase().match(/^[A-Z*]$/) || [""])[0];
+      if(!cleaned){
+        setStatus("Invalid. Use a single A–Z or *.", "bad");
+        return;
+      }
+      setLetterFor(dx,dy, cleaned);
+      setStatus("Tile set. Tap another ghost tile or place.", "ok");
+      draw();
+      return;
+    } else {
+      // place
+      const ok = commitPlacement(ghost.x, ghost.y);
+      if(!ok) draw();
+    }
+  }
+
+  canvas.addEventListener('pointerdown', onPointerDown, {passive:false});
+
+  // Buttons
+  document.getElementById('rotateBtn').onclick = () => { rotate(); setStatus("Rotated.", "ok"); };
+  document.getElementById('editBtn').onclick = () => {
+    editMode = !editMode;
+    setStatus(editMode ? "Edit mode: tap ghost tiles to set letters." : "Place mode: tap board to place.", "ok");
+    draw();
+  };
+  document.getElementById('undoBtn').onclick = () => {
+    const s = history.pop();
+    if(!s){ setStatus("Nothing to undo.", "bad"); return; }
+    restoreSnap(s);
+    setStatus("Undid last move.", "ok");
+  };
+  document.getElementById('resetBtn').onclick = () => {
+    if(!confirm("Reset the board?")) return;
+    grid = Array.from({length:N}, ()=> Array.from({length:N}, ()=> ""));
+    history = [];
+    inv = {
+      BIG_CROSS: 3, SMALL_CROSS: 3,
+      STICK2: 3, STICK3: 3, STICK4: 3, STICK5: 0,
+      SINGLE: 3, WILD: 1
+    };
+    currentKey = null; currentRot = 0; currentLetters = new Map();
+    setStatus("Reset.", "ok");
+    renderInventory();
+    draw();
+  };
+
+  // Initial draw
+  renderInventory();
+  draw();
+  setStatus("Pick a piece → tap the board to place. Double-tap rotates.");
+})();
+</script>
+</body>
+</html>
