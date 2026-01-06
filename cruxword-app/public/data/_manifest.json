@@ -1,0 +1,35 @@
+{
+  "created_utc": "2025-10-23T18:38:01.214496Z",
+  "files": [
+    {
+      "file": "data/basellex_v0.1.csv",
+      "size_bytes": 804004,
+      "md5": "894325379d6ac78c262b723ccf10386b"
+    },
+    {
+      "file": "data/must_keep.csv",
+      "size_bytes": 323,
+      "md5": "e13f7d54070527d5b3d8e219198283f8"
+    },
+    {
+      "file": "data/playdict.csv",
+      "size_bytes": 1398929,
+      "md5": "de342ebe0696ddfe1fd69e8c5a23df28"
+    },
+    {
+      "file": "data/safe_to_remove.csv",
+      "size_bytes": 168,
+      "md5": "5afa2b9496021942af98a4fad6c5c559"
+    },
+    {
+      "file": "data/segments.csv",
+      "size_bytes": 1385299,
+      "md5": "8fc5d79001f029e010a7f007fc71470b"
+    },
+    {
+      "file": "data/segments_enriched.csv",
+      "size_bytes": 1566273,
+      "md5": "382c9ae98f629654b31fa7292380b19d"
+    }
+  ]
+}

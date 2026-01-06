@@ -1,0 +1,26 @@
+{
+  "created_utc": "2025-10-23T18:16:33.245749Z",
+  "files": [
+    {
+      "file": "data/basellex_v0.1.csv",
+      "size_bytes": 778448,
+      "md5": "e0b24a3ee490018b24bc8c688229740f"
+    },
+    {
+      "file": "data/playdict.csv",
+      "size_bytes": 1398929,
+      "md5": "de342ebe0696ddfe1fd69e8c5a23df28"
+    },
+    {
+      "file": "data/segments.csv",
+      "size_bytes": 1293175,
+      "md5": "0571ca394e031cf8d05c89be1f1542b2"
+    }
+  ],
+  "dir_listing": [
+    "basellex_v0.1.csv",
+    "cruxword_word_parts.zip",
+    "playdict.csv",
+    "segments.csv"
+  ]
+}
