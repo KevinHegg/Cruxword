@@ -3,6 +3,10 @@
 
 	const GRID = 10;
 
+	// Board layout constants (these MUST be included in sizing math)
+	const PAD = 8; // px inside board frame
+	const GAP = 4; // px between cells
+
 	// ---------- Utilities ----------
 	const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 	const deepClone = (x) => JSON.parse(JSON.stringify(x));
@@ -13,32 +17,24 @@
 	}
 
 	// ---------- Game State ----------
-	// One source of truth: all pieces live here; each is either in 'bag' or on 'board'
-	// slot: stable "bag slot" so returning puts it back where it came from.
 	let pieces = [];
 	let selectedId = null;
 
-	// Board sizing (fit iPhone screen, no vertical scroll)
-	let boardWrapEl;
-	let boardSize = 320; // px (computed)
-	let cellSize = 32; // px (computed)
+	// Refs for sizing
+	let headerEl;
+	let footerEl;
 
-	// Overlay / help
-	let showCheat = true; // starts ON
-	const CHEAT_TEXT = `How to play
-• Tap a stick to select
-• Hold-drag a stick to move it
-• Hold an intersection to move the whole cluster
-• Double-tap a stick to return it to the bag
-• Double-tap an intersection to remove those intersecting sticks
-• Rotate via the rotate button (or tap rotate while selected)
-Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
+	// Computed sizing
+	let boardSize = 320; // outer board px (includes PAD + gaps)
+	let cellSize = 28; // square cells (px)
+
+	// Overlay / help (starts ON)
+	let showCheat = true;
 
 	// History for Undo
 	let history = [];
 	function snapshot() {
 		history.push(deepClone({ pieces, selectedId, showCheat }));
-		// keep it small
 		if (history.length > 60) history.shift();
 	}
 	function undo() {
@@ -55,7 +51,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	}
 
 	// ---------- Bag generation (sample) ----------
-	// You can replace this later with JSON bags.
+	// Replace later with JSON daily bags.
 	const SAMPLE_STRINGS = [
 		// 5s
 		'MICRO',
@@ -64,10 +60,10 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		'LOGIC',
 		'STACK',
 		'WORDS',
-		'SCHEM',
 		'TRACE',
 		'SHARE',
 		'FIBON',
+		'CLUES',
 		// 4s
 		'OVER',
 		'ABLE',
@@ -80,16 +76,16 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		'SEMI',
 		'CORE',
 		// 3s
-		'UN-',
-		'RE-',
-		'BIO',
 		'ARC',
 		'RAG',
 		'MAP',
 		'DOT',
-		'GIST',
 		'KEY',
 		'PIV',
+		'UNK',
+		'GEO',
+		'VIZ',
+		'NET',
 		// 2s
 		'ED',
 		'ER',
@@ -115,40 +111,66 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	];
 
 	function initGame() {
-		// Create pieces in stable "slots", all start horizontal in the bag.
 		pieces = SAMPLE_STRINGS.map((letters, i) => ({
 			id: makeId('stick'),
 			letters,
 			len: letters.length,
-			dir: 'h', // 'h' or 'v'
+			dir: 'h', // 'h' | 'v'
 			where: 'bag', // 'bag' | 'board'
 			slot: i,
-			// board placement:
 			x: null,
 			y: null
 		}));
 		selectedId = null;
 	}
 
+	function hideCheatOnAction() {
+		if (showCheat) showCheat = false;
+	}
+
 	onMount(() => {
 		initGame();
 		recomputeBoardSize();
-		window.addEventListener('resize', recomputeBoardSize, { passive: true });
-		return () => window.removeEventListener('resize', recomputeBoardSize);
+
+		const vv = window.visualViewport;
+		const onResize = () => recomputeBoardSize();
+
+		window.addEventListener('resize', onResize, { passive: true });
+		vv?.addEventListener('resize', onResize, { passive: true });
+		vv?.addEventListener('scroll', onResize, { passive: true }); // safari bars
+
+		return () => {
+			window.removeEventListener('resize', onResize);
+			vv?.removeEventListener('resize', onResize);
+			vv?.removeEventListener('scroll', onResize);
+		};
 	});
 
+	function viewportW() {
+		return window.visualViewport?.width ?? window.innerWidth;
+	}
+	function viewportH() {
+		return window.visualViewport?.height ?? window.innerHeight;
+	}
+
 	function recomputeBoardSize() {
-		if (!boardWrapEl) return;
-		const r = boardWrapEl.getBoundingClientRect();
+		// Available width: basically full screen minus side padding.
+		const availW = Math.floor(viewportW() - 28);
 
-		// Board should fit inside available vertical space without pushing the bag off-screen.
-		// Use the wrap's height and width, minus a little padding.
-		const maxW = Math.floor(r.width - 16);
-		const maxH = Math.floor(r.height - 10);
+		// Available height: viewport minus header/footer (no vertical scrolling).
+		const headerH = headerEl?.getBoundingClientRect().height ?? 140;
+		const footerH = footerEl?.getBoundingClientRect().height ?? 180;
 
-		boardSize = Math.max(220, Math.min(maxW, maxH));
-		cellSize = Math.floor(boardSize / GRID);
-		boardSize = cellSize * GRID; // snap to exact grid pixels
+		const availH = Math.floor(viewportH() - headerH - footerH - 12);
+
+		const maxOuter = Math.max(220, Math.min(availW, availH));
+
+		// IMPORTANT: include PAD + GAP in the cell math
+		const usable = maxOuter - PAD * 2 - GAP * (GRID - 1);
+		const cs = Math.max(18, Math.floor(usable / GRID));
+
+		cellSize = cs;
+		boardSize = cs * GRID + PAD * 2 + GAP * (GRID - 1);
 	}
 
 	// ---------- Derived helpers ----------
@@ -176,7 +198,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		return x >= 0 && x < GRID && y >= 0 && y < GRID;
 	}
 
-	// Occupancy map: cell -> array of piece ids (and letters)
+	// Occupancy: cell -> array of {id,ch}
 	$: occ = (() => {
 		const m = new Map();
 		for (const p of boardPieces) {
@@ -194,12 +216,11 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		return occ.get(key(x, y)) ?? [];
 	}
 
-	// Pair overlap counts (to enforce: any two sticks may overlap at most ONE tile)
+	// Pair overlap counts (any two sticks may overlap in at most 1 tile)
 	$: overlapViolations = (() => {
-		const pairCounts = new Map(); // "a|b" => count
-		for (const [k, arr] of occ.entries()) {
+		const pairCounts = new Map();
+		for (const arr of occ.values()) {
 			if (arr.length <= 1) continue;
-			// count all pairs in this cell
 			for (let i = 0; i < arr.length; i++) {
 				for (let j = i + 1; j < arr.length; j++) {
 					const a = arr[i].id;
@@ -210,16 +231,13 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 			}
 		}
 		const badPairs = new Set();
-		for (const [p, ct] of pairCounts.entries()) {
-			if (ct > 1) badPairs.add(p); // overlap > 1 cell between same two pieces
-		}
+		for (const [p, ct] of pairCounts.entries()) if (ct > 1) badPairs.add(p);
 		return { pairCounts, badPairs };
 	})();
 
 	function isCellMultiOverlap(x, y) {
 		const arr = cellPieces(x, y);
 		if (arr.length <= 1) return false;
-		// If any pair inside this cell already has overlap count > 1, it's a violation cell.
 		for (let i = 0; i < arr.length; i++) {
 			for (let j = i + 1; j < arr.length; j++) {
 				const a = arr[i].id;
@@ -231,9 +249,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		return false;
 	}
 
-	// Runs (for min word length >= 3)
-	// A "run" is any consecutive occupied cells in a row/col.
-	// Submission requires no runs of length 1-2 anywhere.
+	// Runs (minimum word length >= 3) — checks density legality later on submit
 	$: runInfo = (() => {
 		const occupied = Array.from({ length: GRID }, () => Array(GRID).fill(false));
 		for (const k of occ.keys()) {
@@ -241,7 +257,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 			occupied[y][x] = true;
 		}
 
-		const validCells = new Set(); // cells that belong to a run length >= 3 (either direction)
+		const validCells = new Set();
 		let hasShortRun = false;
 
 		// horizontal
@@ -255,11 +271,8 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 				let x2 = x;
 				while (x2 < GRID && occupied[y][x2]) x2++;
 				const len = x2 - x;
-				if (len >= 3) {
-					for (let xi = x; xi < x2; xi++) validCells.add(key(xi, y));
-				} else {
-					hasShortRun = true;
-				}
+				if (len >= 3) for (let xi = x; xi < x2; xi++) validCells.add(key(xi, y));
+				else hasShortRun = true;
 				x = x2;
 			}
 		}
@@ -275,11 +288,8 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 				let y2 = y;
 				while (y2 < GRID && occupied[y2][x]) y2++;
 				const len = y2 - y;
-				if (len >= 3) {
-					for (let yi = y; yi < y2; yi++) validCells.add(key(x, yi));
-				} else {
-					hasShortRun = true;
-				}
+				if (len >= 3) for (let yi = y; yi < y2; yi++) validCells.add(key(x, yi));
+				else hasShortRun = true;
 				y = y2;
 			}
 		}
@@ -288,7 +298,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	})();
 
 	function pieceSettled(p) {
-		// "Settled" if every tile is part of at least one valid run (h or v) of length >= 3
 		for (const c of cellsOfPiece(p)) {
 			if (!inBoundsCell(c.x, c.y)) return false;
 			if (!runInfo.validCells.has(key(c.x, c.y))) return false;
@@ -296,23 +305,19 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		return true;
 	}
 
-	// Connectivity: pieces are connected if any tile is adjacent (edge) OR overlapping.
+	// Connectivity: adjacency OR overlap connects pieces
 	function pieceAdj(pA, pB) {
 		const aCells = cellsOfPiece(pA);
 		const bSet = new Set(cellsOfPiece(pB).map((c) => key(c.x, c.y)));
 		for (const a of aCells) {
-			const k0 = key(a.x, a.y);
-			if (bSet.has(k0)) return true; // overlap
-			// adjacency
+			if (bSet.has(key(a.x, a.y))) return true;
 			const neigh = [
 				[a.x + 1, a.y],
 				[a.x - 1, a.y],
 				[a.x, a.y + 1],
 				[a.x, a.y - 1]
 			];
-			for (const [nx, ny] of neigh) {
-				if (bSet.has(key(nx, ny))) return true;
-			}
+			for (const [nx, ny] of neigh) if (bSet.has(key(nx, ny))) return true;
 		}
 		return false;
 	}
@@ -351,10 +356,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	$: tilesPlaced = occ.size;
 	$: densityPct = Math.round((tilesPlaced / (GRID * GRID)) * 100);
 
-	// Submission validity:
-	// - one big cluster (no orphans)
-	// - no short runs anywhere (len < 3)
-	// - no multi-overlap violations (any two pieces overlap in > 1 tile)
+	// Submit validity: one cluster + no short runs + no multi-overlap
 	$: canSubmit =
 		boardPieces.length > 0 &&
 		!hasOrphans &&
@@ -362,10 +364,9 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		overlapViolations.badPairs.size === 0;
 
 	function submit() {
-		// keep MVP: just show a summary popup
 		if (!canSubmit) return;
 		alert(
-			`Submitted!\n\nTiles: ${tilesPlaced}/100\nDensity: ${densityPct}%\nPieces used: ${boardPieces.length}\n\nNext: generate/share a code for friends.`
+			`Submitted!\n\nTiles: ${tilesPlaced}/100\nDensity: ${densityPct}%\nPieces used: ${boardPieces.length}\n\nNext: encode + share a puzzle link.`
 		);
 	}
 
@@ -385,15 +386,11 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		hideCheatOnAction();
 	}
 
-	function hideCheatOnAction() {
-		if (showCheat) showCheat = false;
-	}
-
-	// ---------- Drag / move logic ----------
-	let drag = null; // { mode, ids, startX, startY, startPos: Map(id-> {x,y}), dx,dy, dragging }
+	// ---------- Drag / move ----------
+	let drag = null; // { ids, startX, startY, startPos:Map, dx,dy }
 	let holdTimer = null;
-	let pointerDown = null; // { targetType, ... }
-	const HOLD_MS = 180;
+	let pointerDown = null;
+	const HOLD_MS = 190;
 
 	function clearHoldTimer() {
 		if (holdTimer) {
@@ -402,41 +399,14 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		}
 	}
 
-	function startDragForPiece(pieceId, clientX, clientY) {
-		const p = pieces.find((x) => x.id === pieceId);
-		if (!p || p.where !== 'board') return;
-
+	function startDrag(ids, clientX, clientY) {
 		snapshot();
-
-		drag = {
-			mode: 'piece',
-			ids: [pieceId],
-			startX: clientX,
-			startY: clientY,
-			startPos: new Map([[pieceId, { x: p.x, y: p.y }]]),
-			dx: 0,
-			dy: 0
-		};
-		hideCheatOnAction();
-	}
-
-	function startDragForCluster(pieceIds, clientX, clientY) {
-		snapshot();
-
 		const startPos = new Map();
-		for (const id of pieceIds) {
+		for (const id of ids) {
 			const p = pieces.find((x) => x.id === id);
 			if (p?.where === 'board') startPos.set(id, { x: p.x, y: p.y });
 		}
-		drag = {
-			mode: 'cluster',
-			ids: pieceIds.slice(),
-			startX: clientX,
-			startY: clientY,
-			startPos,
-			dx: 0,
-			dy: 0
-		};
+		drag = { ids, startX: clientX, startY: clientY, startPos, dx: 0, dy: 0 };
 		hideCheatOnAction();
 	}
 
@@ -444,19 +414,12 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		if (!drag) return { dx: 0, dy: 0 };
 		const dxPx = clientX - drag.startX;
 		const dyPx = clientY - drag.startY;
-		const dx = Math.round(dxPx / cellSize);
-		const dy = Math.round(dyPx / cellSize);
-		return { dx, dy };
-	}
-
-	function applyDragDelta(dx, dy) {
-		if (!drag) return;
-		drag.dx = dx;
-		drag.dy = dy;
+		return { dx: Math.round(dxPx / cellSize), dy: Math.round(dyPx / cellSize) };
 	}
 
 	function endDrag(commit = true) {
 		if (!drag) return;
+
 		if (commit) {
 			for (const id of drag.ids) {
 				const p = pieces.find((x) => x.id === id);
@@ -464,22 +427,18 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 				if (!p || !s) continue;
 				p.x = s.x + drag.dx;
 				p.y = s.y + drag.dy;
-			}
-			// Clamp all pieces back into bounds if needed (simple clamp)
-			for (const id of drag.ids) {
-				const p = pieces.find((x) => x.id === id);
-				if (!p) continue;
-				// ensure all cells in bounds by clamping anchor
+
 				const maxX = p.dir === 'h' ? GRID - p.len : GRID - 1;
 				const maxY = p.dir === 'v' ? GRID - p.len : GRID - 1;
 				p.x = clamp(p.x, 0, maxX);
 				p.y = clamp(p.y, 0, maxY);
 			}
 		}
+
 		drag = null;
 	}
 
-	// ---------- Double-tap handling ----------
+	// ---------- Double-tap ----------
 	let lastTap = { t: 0, kind: '', ref: '' };
 	const DOUBLE_MS = 320;
 
@@ -497,7 +456,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		p.where = 'bag';
 		p.x = null;
 		p.y = null;
-		// keep its slot; it will reappear where it came from
 		hideCheatOnAction();
 	}
 
@@ -518,7 +476,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 		snapshot();
 
-		// put on board at x,y, clamped
 		const maxX = p.dir === 'h' ? GRID - p.len : GRID - 1;
 		const maxY = p.dir === 'v' ? GRID - p.len : GRID - 1;
 
@@ -526,44 +483,33 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		p.x = clamp(x, 0, maxX);
 		p.y = clamp(y, 0, maxY);
 
-		// keep selected (so quick placement feels good)
 		hideCheatOnAction();
 	}
 
 	// ---------- Pointer handlers ----------
 	function onBoardPointerDown(e, x, y) {
-		// prevent iOS double-tap zoom and page scrolling while interacting
 		e.preventDefault?.();
-
 		hideCheatOnAction();
 		clearHoldTimer();
 
-		const cellArr = cellPieces(x, y);
-		const occupied = cellArr.length > 0;
-
-		// If tapped empty: place selected stick
-		if (!occupied) {
-			// no hold behavior, just place if selected
-			pointerDown = { kind: 'emptyCell', x, y };
+		const arr = cellPieces(x, y);
+		if (!arr.length) {
+			pointerDown = { kind: 'empty', x, y };
 			return;
 		}
 
-		// Occupied cell: decide piece vs cluster hold drag
-		const idsHere = [...new Set(cellArr.map((a) => a.id))];
+		const idsHere = [...new Set(arr.map((a) => a.id))];
 		const isIntersection = idsHere.length > 1;
-
-		pointerDown = { kind: isIntersection ? 'intersection' : 'pieceCell', x, y, idsHere };
+		pointerDown = { kind: isIntersection ? 'intersection' : 'piece', x, y, idsHere };
 
 		holdTimer = setTimeout(() => {
 			holdTimer = null;
-			// Hold on intersection => drag entire cluster (connected component of the first piece)
 			if (isIntersection) {
 				const anyId = idsHere[0];
 				const comp = comps.find((c) => c.includes(anyId)) ?? [anyId];
-				startDragForCluster(comp, e.clientX, e.clientY);
+				startDrag(comp, e.clientX, e.clientY);
 			} else {
-				// Hold on non-intersection => drag just that piece
-				startDragForPiece(idsHere[0], e.clientX, e.clientY);
+				startDrag([idsHere[0]], e.clientX, e.clientY);
 			}
 		}, HOLD_MS);
 	}
@@ -572,47 +518,38 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		if (!drag) return;
 		e.preventDefault?.();
 		const { dx, dy } = computeDragDelta(e.clientX, e.clientY);
-		applyDragDelta(dx, dy);
+		drag.dx = dx;
+		drag.dy = dy;
 	}
 
 	function onBoardPointerUp(e, x, y) {
 		e.preventDefault?.();
 		clearHoldTimer();
 
-		// If dragging, commit drag
 		if (drag) {
 			endDrag(true);
+			pointerDown = null;
 			return;
 		}
 
-		// Not dragging: handle tap behaviors
 		if (!pointerDown) return;
 
-		if (pointerDown.kind === 'emptyCell') {
-			// tap empty cell => place selected
+		if (pointerDown.kind === 'empty') {
 			placeSelectedAt(x, y);
 			pointerDown = null;
 			return;
 		}
 
-		if (pointerDown.kind === 'pieceCell') {
+		if (pointerDown.kind === 'piece') {
 			const id = pointerDown.idsHere[0];
-			const dbl = isDoubleTap('pieceCell', id);
-			if (dbl) {
-				// double-tap a stick => return it to bag
-				returnPieceToBag(id);
-			}
+			if (isDoubleTap('piece', id)) returnPieceToBag(id);
 			pointerDown = null;
 			return;
 		}
 
 		if (pointerDown.kind === 'intersection') {
-			// double-tap intersection => remove sticks that intersect HERE
 			const ref = key(x, y);
-			const dbl = isDoubleTap('intersection', ref);
-			if (dbl) {
-				removeIntersectingSticksAtCell(x, y);
-			}
+			if (isDoubleTap('intersection', ref)) removeIntersectingSticksAtCell(x, y);
 			pointerDown = null;
 			return;
 		}
@@ -622,10 +559,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 	function onBagPointerDown(e, id) {
 		e.preventDefault?.();
-		hideCheatOnAction();
-		clearHoldTimer();
-
-		// Tap selects; long-hold does nothing special in bag for now.
 		selectBagPiece(id);
 	}
 
@@ -634,12 +567,10 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		const arr = cellPieces(x, y);
 		if (!arr.length) return '';
 		if (arr.length === 1) return arr[0].ch;
-		// multiple pieces: show topmost (last in pieces array order by board placement)
-		// We'll approximate by taking the last matching piece id in `pieces`.
+
 		const ids = arr.map((a) => a.id);
 		for (let i = pieces.length - 1; i >= 0; i--) {
 			if (ids.includes(pieces[i].id)) {
-				// determine letter for that piece at x,y
 				const p = pieces[i];
 				for (const c of cellsOfPiece(p)) if (c.x === x && c.y === y) return c.ch;
 			}
@@ -663,11 +594,9 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 			.join(' ');
 	}
 
-	// Show piece settled highlight on its tiles (soft "ok" cue)
 	function isCellSettled(x, y) {
 		const arr = cellPieces(x, y);
 		if (!arr.length) return false;
-		// settled if all pieces covering this cell are settled
 		for (const it of arr) {
 			const p = pieces.find((z) => z.id === it.id);
 			if (!p) continue;
@@ -676,25 +605,14 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		return true;
 	}
 
-	// For dragging preview: override positions
-	function previewPos(id) {
-		if (!drag) return null;
-		if (!drag.startPos.has(id)) return null;
-		const s = drag.startPos.get(id);
-		return { x: s.x + drag.dx, y: s.y + drag.dy };
-	}
-
-	// For bag display, render a stick as mini tiles
 	function pieceTilesForDisplay(p) {
-		const letters = p.letters.split('');
-		return letters;
+		return p.letters.split('');
 	}
 </script>
 
 <svelte:window
 	on:pointermove={onBoardPointerMove}
 	on:pointerup={() => {
-		// If user releases outside the board, end drag.
 		if (drag) endDrag(true);
 		clearHoldTimer();
 		pointerDown = null;
@@ -702,23 +620,11 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 />
 
 <div class="app">
-	<header class="top">
+	<header class="top" bind:this={headerEl}>
 		<div class="brandRow">
-			<div class="brand">
-				<div class="title">CRUXWORD <span class="muted">(Bag {bagPieces.length})</span></div>
+			<div class="title">
+				CRUXWORD <span class="muted">(Bag {bagPieces.length})</span>
 			</div>
-
-			<button
-				class="iconBtn"
-				aria-label="Help"
-				title="Help"
-				on:click={() => {
-					// toggles; also counts as an action, so it may hide next time.
-					showCheat = !showCheat;
-				}}
-			>
-				?
-			</button>
 		</div>
 
 		<div class="statsRow">
@@ -728,18 +634,23 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 			<div class="actions">
 				<button class="btn" on:click={undo} disabled={history.length === 0}>Undo</button>
 				<button class="btn" on:click={reset}>Reset</button>
-				<button class="btn primary" on:click={submit} disabled={!canSubmit} title={canSubmit ? 'Submit' : 'Fix: short runs, orphans, or multi-overlaps'}>
-					Submit
-				</button>
+				<button class="btn primary" on:click={submit} disabled={!canSubmit}>Submit</button>
 			</div>
 		</div>
 	</header>
 
 	<main class="middle">
-		<div class="boardWrap" bind:this={boardWrapEl}>
+		<div class="boardWrap">
 			<div
 				class="board"
-				style="width:{boardSize}px;height:{boardSize}px;grid-template-columns:repeat({GRID}, {cellSize}px);grid-template-rows:repeat({GRID}, {cellSize}px);"
+				style="
+					width:{boardSize}px;
+					height:{boardSize}px;
+					padding:{PAD}px;
+					gap:{GAP}px;
+					grid-template-columns:repeat({GRID}, {cellSize}px);
+					grid-template-rows:repeat({GRID}, {cellSize}px);
+				"
 			>
 				{#each Array(GRID) as _, y}
 					{#each Array(GRID) as __, x}
@@ -761,20 +672,54 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 				{#if showCheat}
 					<div class="cheat" on:pointerdown|preventDefault on:pointerup|preventDefault>
-						<pre>{CHEAT_TEXT}</pre>
+						<div class="cheatCard">
+							<div class="cheatTitle">How to play</div>
+							<ul class="cheatList">
+								<li><b>Tap</b> a stick to select it</li>
+								<li><b>Tap</b> an empty cell to place the selected stick</li>
+								<li><b>Hold</b> a stick tile to drag that stick</li>
+								<li><b>Hold</b> an <b>intersection</b> to drag the whole cluster</li>
+								<li><b>Double-tap</b> a stick tile to return that stick to the bag</li>
+								<li><b>Double-tap</b> an intersection to return all sticks intersecting <i>there</i></li>
+								<li><b>Rotate</b> with the ↻ button (only when a stick is selected)</li>
+								<li>Submit requires: <b>one cluster</b>, <b>no short runs (&lt;3)</b>, <b>no multi-overlaps</b></li>
+							</ul>
+						</div>
 					</div>
 				{/if}
 			</div>
 		</div>
 	</main>
 
-	<footer class="bag">
+	<footer class="bag" bind:this={footerEl}>
 		<div class="bagHead">
 			<div class="bagTitle">Morphemes</div>
 
 			<div class="bagTools">
-				<button class="iconBtn" aria-label="Rotate selected" title="Rotate selected" on:click={rotateSelected} disabled={!selectedId}>
+				<button
+					class="iconBtn"
+					aria-label="Rotate selected"
+					title="Rotate selected"
+					on:click={() => {
+						hideCheatOnAction();
+						rotateSelected();
+					}}
+					disabled={!selectedId}
+				>
 					↻
+				</button>
+
+				<button
+					class="iconBtn"
+					aria-label="Cheat sheet"
+					title="Cheat sheet"
+					on:click={() => {
+						// Note: clicking is an action; if it was showing, it will hide anyway.
+						// If it was hidden, it shows.
+						showCheat = !showCheat;
+					}}
+				>
+					?
 				</button>
 			</div>
 		</div>
@@ -787,7 +732,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 					aria-label={`Stick ${p.letters}`}
 				>
 					<div class="len">{p.len}</div>
-					<div class="miniTiles mini-{p.len}">
+					<div class="miniTiles">
 						{#each pieceTilesForDisplay(p) as ch}
 							<div class="miniCell"><span>{ch}</span></div>
 						{/each}
@@ -825,7 +770,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		background: radial-gradient(circle at 30% 20%, #0a1630 0%, #060b16 45%, #050812 100%);
 		color: #e7ebf2;
 		font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-		/* helps reduce iOS double-tap zoom on controls */
 		touch-action: manipulation;
 	}
 
@@ -835,21 +779,21 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	}
 
 	.app {
-		height: 100svh; /* iOS-friendly viewport */
+		height: 100svh;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden; /* no vertical scroll */
 	}
 
+	/* ---------- Header ---------- */
 	.top {
-		padding: 14px 14px 10px;
+		padding: 12px 14px 8px;
 	}
 
 	.brandRow {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 10px;
 	}
 
 	.title {
@@ -860,7 +804,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 	.muted {
 		opacity: 0.65;
-		font-weight: 700;
+		font-weight: 800;
 		letter-spacing: 0.06em;
 		font-size: 13px;
 	}
@@ -870,31 +814,35 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		display: flex;
 		align-items: center;
 		gap: 10px;
-		flex-wrap: wrap;
+		flex-wrap: nowrap; /* keep actions with pills */
+		overflow: hidden;
 	}
 
 	.pill {
-		padding: 10px 12px;
+		padding: 8px 10px;
 		border-radius: 16px;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		background: rgba(255, 255, 255, 0.02);
 		backdrop-filter: blur(6px);
-		font-size: 14px;
+		font-size: 13px;
+		white-space: nowrap;
 	}
 
 	.actions {
 		margin-left: auto;
 		display: flex;
-		gap: 10px;
+		gap: 8px;
+		white-space: nowrap;
 	}
 
 	.btn {
-		padding: 10px 14px;
+		padding: 8px 10px;
 		border-radius: 14px;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		background: rgba(255, 255, 255, 0.03);
 		color: inherit;
-		font-weight: 700;
+		font-weight: 800;
+		font-size: 13px;
 	}
 
 	.btn:disabled {
@@ -906,23 +854,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		background: rgba(92, 203, 255, 0.12);
 	}
 
-	.iconBtn {
-		width: 42px;
-		height: 42px;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.03);
-		color: inherit;
-		font-size: 18px;
-		font-weight: 900;
-		display: grid;
-		place-items: center;
-	}
-
-	.iconBtn:disabled {
-		opacity: 0.4;
-	}
-
+	/* ---------- Board ---------- */
 	.middle {
 		flex: 1;
 		min-height: 0;
@@ -941,8 +873,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	.board {
 		position: relative;
 		display: grid;
-		gap: 6px;
-		padding: 10px;
 		border-radius: 22px;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		background: rgba(255, 255, 255, 0.02);
@@ -957,7 +887,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		padding: 0;
 		display: grid;
 		place-items: center;
-		touch-action: none; /* board is gesture-heavy */
+		touch-action: none;
 	}
 
 	/* light grid outline feel */
@@ -971,16 +901,11 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	}
 
 	.cell.validRun {
-		/* subtle */
 		box-shadow: inset 0 0 0 1px rgba(92, 203, 255, 0.12);
 	}
 
 	.cell.shortRun {
 		box-shadow: inset 0 0 0 1px rgba(255, 170, 80, 0.28);
-	}
-
-	.cell.overlap {
-		box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
 	}
 
 	.cell.overlapBad {
@@ -994,7 +919,6 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	.ch {
 		font-weight: 900;
 		letter-spacing: 0.06em;
-		/* big enough on iPhone: scales with cell size */
 		font-size: clamp(14px, 2.4vw, 20px);
 		color: rgba(255, 255, 255, 0.95);
 		user-select: none;
@@ -1003,39 +927,57 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 	.dot {
 		position: absolute;
-		right: 6px;
-		bottom: 6px;
-		width: 8px;
-		height: 8px;
+		right: 5px;
+		bottom: 5px;
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.6);
+		background: rgba(255, 255, 255, 0.65);
 		opacity: 0.75;
 	}
 
+	/* ---------- Cheat overlay ---------- */
 	.cheat {
 		position: absolute;
-		inset: 18px;
+		inset: 12px;
 		border-radius: 18px;
 		border: 1px solid rgba(255, 255, 255, 0.10);
 		background: rgba(0, 0, 0, 0.55);
 		backdrop-filter: blur(8px);
 		display: grid;
 		place-items: center;
-		padding: 14px;
+		padding: 10px;
 	}
 
-	.cheat pre {
+	.cheatCard {
+		width: 100%;
+		max-width: 420px;
+	}
+
+	.cheatTitle {
+		font-weight: 900;
+		letter-spacing: 0.06em;
+		margin-bottom: 8px;
+	}
+
+	/* hanging-indent bullets */
+	.cheatList {
 		margin: 0;
-		white-space: pre-wrap;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-			monospace;
+		padding-left: 18px;
+	}
+
+	.cheatList li {
+		margin: 6px 0;
+		padding-left: 10px;
+		text-indent: -10px;
 		font-size: 12px;
-		line-height: 1.35;
+		line-height: 1.25;
 		opacity: 0.92;
 	}
 
+	/* ---------- Bag ---------- */
 	.bag {
-		padding: 10px 14px 12px;
+		padding: 10px 14px 10px;
 		border-top: 1px solid rgba(255, 255, 255, 0.06);
 		background: rgba(255, 255, 255, 0.02);
 	}
@@ -1056,15 +998,31 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 
 	.bagTools {
 		display: flex;
-		align-items: center;
 		gap: 10px;
+	}
+
+	.iconBtn {
+		width: 42px;
+		height: 42px;
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.03);
+		color: inherit;
+		font-size: 18px;
+		font-weight: 900;
+		display: grid;
+		place-items: center;
+	}
+
+	.iconBtn:disabled {
+		opacity: 0.35;
 	}
 
 	.bagScroller {
 		display: flex;
 		gap: 12px;
 		overflow-x: auto;
-		padding-bottom: 8px;
+		padding-bottom: 6px;
 		scrollbar-width: none;
 	}
 	.bagScroller::-webkit-scrollbar {
@@ -1101,6 +1059,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 		font-weight: 900;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		background: rgba(0, 0, 0, 0.20);
+		font-size: 13px;
 	}
 
 	.miniTiles {
@@ -1128,7 +1087,7 @@ Goal: make one connected cluster; no short runs (< 3); no multi-overlaps`;
 	}
 
 	.bagHint {
-		margin-top: 6px;
+		margin-top: 4px;
 		font-size: 13px;
 		opacity: 0.9;
 	}
