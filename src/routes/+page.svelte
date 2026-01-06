@@ -1,468 +1,680 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+
+  const GRID = 10;
+
   type Orientation = "H" | "V";
 
-  type Stick = {
+  type Piece = {
     id: string;
-    text: string; // letters/word-part on the stick
-    orientation: Orientation;
-    used: boolean;
+    text: string;          // e.g., "PLAY" or "ED"
+    letters: string[];     // ["P","L","A","Y"]
+    o: Orientation;
   };
 
-  const BOARD = 10;
+  type Cell = string | null;
 
-  // --- Board state ---
-  let board: (string | null)[][] = Array.from({ length: BOARD }, () =>
-    Array.from({ length: BOARD }, () => null)
-  );
+  const mkId = () => Math.random().toString(36).slice(2, 10);
 
-  // --- Demo bag (swap with your JSON later) ---
-  // Mix of morphemes + helpful singles; feel free to tune lengths/counts.
-  let bag: Stick[] = [
-    { id: "s1", text: "PLAY", orientation: "H", used: false },
-    { id: "s2", text: "ED", orientation: "H", used: false },
-    { id: "s3", text: "ING", orientation: "H", used: false },
-    { id: "s4", text: "RE", orientation: "H", used: false },
-    { id: "s5", text: "TION", orientation: "H", used: false },
-    { id: "s6", text: "MENT", orientation: "H", used: false },
-    { id: "s7", text: "PRE", orientation: "H", used: false },
-    { id: "s8", text: "UN", orientation: "H", used: false },
-    { id: "s9", text: "S", orientation: "H", used: false },
-    { id: "s10", text: "E", orientation: "H", used: false },
-    { id: "s11", text: "A", orientation: "H", used: false },
-    { id: "s12", text: "STAR", orientation: "H", used: false },
-    { id: "s13", text: "ORBIT", orientation: "H", used: false },
-    { id: "s14", text: "NOVA", orientation: "H", used: false }
-  ];
+  // --- Board ---
+  let board: Cell[] = Array(GRID * GRID).fill(null);
 
-  let selectedId: string | null = null;
-
-  $: selected = bag.find((s) => s.id === selectedId) ?? null;
-
-  function tilesPlacedCount(): number {
-    let n = 0;
-    for (let r = 0; r < BOARD; r++) {
-      for (let c = 0; c < BOARD; c++) if (board[r][c]) n++;
-    }
-    return n;
-  }
-
-  function hasAnyTile(): boolean {
-    return tilesPlacedCount() > 0;
-  }
-
-  function resetGame() {
-    board = Array.from({ length: BOARD }, () =>
-      Array.from({ length: BOARD }, () => null)
-    );
-    bag = bag.map((s) => ({ ...s, used: false, orientation: "H" }));
-    selectedId = null;
-  }
-
-  function rotateSelected() {
-    if (!selected) return;
-    // Keep 5-letter sticks horizontal if you want that constraint:
-    if (selected.text.length === 5) return;
-
-    bag = bag.map((s) =>
-      s.id === selected.id
-        ? { ...s, orientation: s.orientation === "H" ? "V" : "H" }
-        : s
-    );
-  }
-
-  function selectStick(id: string) {
-    const stick = bag.find((s) => s.id === id);
-    if (!stick || stick.used) return;
-
-    if (selectedId === id) {
-      // tap again -> rotate
-      rotateSelected();
-    } else {
-      selectedId = id;
-    }
-  }
-
-  function cancelSelection() {
-    selectedId = null;
-  }
-
-  function inBounds(r: number, c: number) {
-    return r >= 0 && r < BOARD && c >= 0 && c < BOARD;
-  }
-
-  function placementCells(
-    baseR: number,
-    baseC: number,
-    stick: Stick
-  ): { r: number; c: number; ch: string }[] {
-    const letters = stick.text.split("");
-    return letters.map((ch, i) => {
-      const r = stick.orientation === "H" ? baseR : baseR + i;
-      const c = stick.orientation === "H" ? baseC + i : baseC;
-      return { r, c, ch };
-    });
-  }
-
-  function touchesExistingByEdge(
-    cells: { r: number; c: number }[],
-    existingSet: Set<string>
-  ): boolean {
-    // edge-neighbor offsets
-    const dirs = [
-      [-1, 0],
-      [1, 0],
-      [0, -1],
-      [0, 1]
+  // --- Bag (sample morpheme-ish sticks) ---
+  let bag: Piece[] = [];
+  function seedBag() {
+    const samples = [
+      "PLAY", "ED", "ING", "RE", "UN", "TION", "MENT", "ABLE", "IZE",
+      "PRE", "POST", "OVER", "UNDER", "SUB", "TRANS", "INTER",
+      "S", "ES", "ER", "EST", "LY", "NESS", "FUL", "LESS",
+      "LOG", "GRAPH", "CHRON", "BIO", "MICRO", "MACRO",
+      "ARC", "CIV", "DATA", "CODE", "MIND", "NEUR",
+      "STAR", "DUST", "CRUX", "WORD", "RUSH"
     ];
 
-    const newSet = new Set(cells.map((p) => `${p.r},${p.c}`));
+    // keep 1–5 length sticks only for MVP view; split longer chunks into 5s
+    const exploded: string[] = [];
+    for (const t of samples) {
+      if (t.length <= 5) exploded.push(t);
+      else {
+        let s = t;
+        while (s.length > 0) {
+          exploded.push(s.slice(0, 5));
+          s = s.slice(5);
+        }
+      }
+    }
 
-    for (const p of cells) {
-      for (const [dr, dc] of dirs) {
-        const nr = p.r + dr;
-        const nc = p.c + dc;
-        const key = `${nr},${nc}`;
-        // must touch an *existing* tile that is not part of the new placement
-        if (existingSet.has(key) && !newSet.has(key)) return true;
+    // Make ~36 pieces
+    const pick: string[] = [];
+    while (pick.length < 36) {
+      pick.push(exploded[Math.floor(Math.random() * exploded.length)]);
+    }
+
+    bag = pick.map((text) => ({
+      id: mkId(),
+      text,
+      letters: text.split(""),
+      o: "H"
+    }));
+  }
+
+  // --- UI / drag state ---
+  let boardEl: HTMLDivElement | null = null;
+  let bagEl: HTMLDivElement | null = null;
+
+  let active: Piece | null = null;
+  let dragging = false;
+
+  let pointerId: number | null = null;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragX = 0;
+  let dragY = 0;
+
+  let hoverRC: { r: number; c: number } | null = null;
+  let hoverValid = false;
+  let hoverReason = "";
+
+  let lastTapTime = 0;
+
+  // --- Helpers ---
+  const idx = (r: number, c: number) => r * GRID + c;
+  const inBounds = (r: number, c: number) => r >= 0 && r < GRID && c >= 0 && c < GRID;
+
+  function boardHasAnyTiles() {
+    return board.some((x) => x !== null);
+  }
+
+  function pieceCellsAt(piece: Piece, r0: number, c0: number) {
+    // returns list of {r,c,letter} for the piece starting at (r0,c0) for its orientation
+    const cells: { r: number; c: number; ch: string }[] = [];
+    for (let i = 0; i < piece.letters.length; i++) {
+      const r = piece.o === "H" ? r0 : r0 + i;
+      const c = piece.o === "H" ? c0 + i : c0;
+      cells.push({ r, c, ch: piece.letters[i] });
+    }
+    return cells;
+  }
+
+  function touchesExistingByAdjacency(cells: { r: number; c: number }[]) {
+    // adjacency = shares an edge with any existing tile
+    const dirs = [
+      { dr: -1, dc: 0 },
+      { dr: 1, dc: 0 },
+      { dr: 0, dc: -1 },
+      { dr: 0, dc: 1 }
+    ];
+    for (const { r, c } of cells) {
+      for (const { dr, dc } of dirs) {
+        const rr = r + dr;
+        const cc = c + dc;
+        if (!inBounds(rr, cc)) continue;
+        if (board[idx(rr, cc)] !== null) return true;
       }
     }
     return false;
   }
 
-  function canPlaceAt(baseR: number, baseC: number, stick: Stick): { ok: boolean; reason?: string } {
-    const cells = placementCells(baseR, baseC, stick);
+  function validatePlacement(piece: Piece, r0: number, c0: number) {
+    const cells = pieceCellsAt(piece, r0, c0);
 
-    // bounds + overlap check
-    for (const p of cells) {
-      if (!inBounds(p.r, p.c)) return { ok: false, reason: "Out of bounds" };
-      if (board[p.r][p.c]) return { ok: false, reason: "Overlaps existing" };
+    // bounds
+    for (const { r, c } of cells) {
+      if (!inBounds(r, c)) return { ok: false, reason: "Out of bounds" };
     }
 
-    // build existing set
-    const existing = new Set<string>();
-    for (let r = 0; r < BOARD; r++) {
-      for (let c = 0; c < BOARD; c++) {
-        if (board[r][c]) existing.add(`${r},${c}`);
-      }
+    // overlap rules:
+    // - you can overlap exactly matching letters
+    // - at most 1 overlap cell
+    // - cannot overwrite different letter
+    let overlaps = 0;
+    for (const { r, c, ch } of cells) {
+      const cur = board[idx(r, c)];
+      if (cur === null) continue;
+      if (cur !== ch) return { ok: false, reason: "Conflicting letter" };
+      overlaps++;
+      if (overlaps > 1) return { ok: false, reason: "Too many overlaps (max 1)" };
     }
 
-    // first move can be anywhere
-    if (existing.size === 0) return { ok: true };
+    // connectivity:
+    // - if board empty, allow anywhere
+    // - else must touch existing (adjacent) OR overlap (intersection)
+    if (!boardHasAnyTiles()) return { ok: true, reason: "" };
 
-    // later moves must touch existing by an edge
-    const touches = touchesExistingByEdge(
-      cells.map(({ r, c }) => ({ r, c })),
-      existing
-    );
-    if (!touches) return { ok: false, reason: "Must touch existing tiles" };
+    const coordsOnly = cells.map(({ r, c }) => ({ r, c }));
+    const hasAdj = touchesExistingByAdjacency(coordsOnly);
+    const hasOverlap = overlaps === 1;
 
-    return { ok: true };
+    if (!hasAdj && !hasOverlap) return { ok: false, reason: "Must connect to existing tiles" };
+
+    return { ok: true, reason: "" };
   }
 
-  function placeSelectedAt(r: number, c: number) {
-    if (!selected) return;
-
-    const check = canPlaceAt(r, c, selected);
-    if (!check.ok) return;
-
-    const cells = placementCells(r, c, selected);
-
-    // apply to board
-    const next = board.map((row) => row.slice());
-    for (const p of cells) next[p.r][p.c] = p.ch;
-    board = next;
-
-    // mark stick used
-    bag = bag.map((s) => (s.id === selected.id ? { ...s, used: true } : s));
-    selectedId = null;
+  function placePiece(piece: Piece, r0: number, c0: number) {
+    const cells = pieceCellsAt(piece, r0, c0);
+    for (const { r, c, ch } of cells) {
+      const i = idx(r, c);
+      if (board[i] === null) board[i] = ch; // keep existing matching overlaps
+    }
+    bag = bag.filter((p) => p.id !== piece.id);
   }
 
-  // Simple “percent filled” monitor
-  $: filled = tilesPlacedCount();
-  $: percent = Math.round((filled / (BOARD * BOARD)) * 100);
+  function rotatePiece(piece: Piece) {
+    piece.o = piece.o === "H" ? "V" : "H";
+    // force Svelte update
+    bag = bag.map((p) => (p.id === piece.id ? { ...piece } : p));
+    if (active?.id === piece.id) active = { ...piece };
+  }
+
+  function resetAll() {
+    board = Array(GRID * GRID).fill(null);
+    active = null;
+    dragging = false;
+    hoverRC = null;
+    hoverValid = false;
+    hoverReason = "";
+    seedBag();
+  }
+
+  // --- Drag behavior ---
+  function onPiecePointerDown(e: PointerEvent, piece: Piece) {
+    // double-tap to rotate (mobile-friendly)
+    const now = Date.now();
+    if (now - lastTapTime < 280) {
+      rotatePiece(piece);
+      lastTapTime = 0;
+      return;
+    }
+    lastTapTime = now;
+
+    active = { ...piece };
+    dragging = true;
+
+    pointerId = e.pointerId;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+
+    dragX = e.clientX;
+    dragY = e.clientY;
+
+    hoverRC = null;
+    hoverValid = false;
+    hoverReason = "";
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp, { passive: false });
+    window.addEventListener("pointercancel", onPointerUp, { passive: false });
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || !active) return;
+    dragX = e.clientX;
+    dragY = e.clientY;
+
+    // compute hover cell
+    const rect = boardEl?.getBoundingClientRect();
+    if (!rect) return;
+
+    const inside =
+      e.clientX >= rect.left &&
+      e.clientX <= rect.right &&
+      e.clientY >= rect.top &&
+      e.clientY <= rect.bottom;
+
+    if (!inside) {
+      hoverRC = null;
+      hoverValid = false;
+      hoverReason = "Drop on the board";
+      return;
+    }
+
+    const cellSize = rect.width / GRID;
+    const c = Math.floor((e.clientX - rect.left) / cellSize);
+    const r = Math.floor((e.clientY - rect.top) / cellSize);
+
+    hoverRC = { r, c };
+    const v = validatePlacement(active, r, c);
+    hoverValid = v.ok;
+    hoverReason = v.reason;
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (!dragging || !active) cleanupDrag();
+
+    if (!dragging || !active) return;
+
+    if (hoverRC && hoverValid) {
+      placePiece(active, hoverRC.r, hoverRC.c);
+    }
+
+    cleanupDrag();
+  }
+
+  function cleanupDrag() {
+    dragging = false;
+    pointerId = null;
+    active = null;
+    hoverRC = null;
+    hoverValid = false;
+    hoverReason = "";
+
+    window.removeEventListener("pointermove", onPointerMove as any);
+    window.removeEventListener("pointerup", onPointerUp as any);
+    window.removeEventListener("pointercancel", onPointerUp as any);
+  }
+
+  // --- Derived UI ---
+  $: placedCount = board.filter(Boolean).length;
+  $: density = Math.round((placedCount / (GRID * GRID)) * 100);
+
+  onMount(() => {
+    seedBag();
+  });
 </script>
 
-<svelte:head>
-  <title>Cruxword (MVP)</title>
-</svelte:head>
-
 <div class="wrap">
-  <header class="topbar">
-    <div class="title">
-      <div class="name">CRUXWORD</div>
-      <div class="tag">Morpheme Rush — a daily workout for your brain</div>
+  <div class="topbar">
+    <div class="titleRow">
+      <div class="title">CRUXWORD</div>
+      <div class="subtitle">Morpheme Rush, a daily workout for your brain.</div>
     </div>
 
     <div class="stats">
-      <div class="stat">
-        <div class="label">Filled</div>
-        <div class="value">{filled}/100 ({percent}%)</div>
-      </div>
-      <div class="stat">
-        <div class="label">Selected</div>
-        <div class="value">{selected ? `${selected.text} (${selected.orientation})` : "—"}</div>
-      </div>
+      <div class="pill"><span>Tiles</span><b>{placedCount}/100</b></div>
+      <div class="pill"><span>Density</span><b>{density}%</b></div>
+      <div class="pill"><span>Bag</span><b>{bag.length}</b></div>
+      <button class="btn" on:click={resetAll}>Reset</button>
     </div>
-  </header>
+  </div>
 
-  <main class="main">
-    <!-- Board -->
-    <section class="boardCard">
-      <div class="board" aria-label="10 by 10 board">
-        {#each board as row, r}
-          {#each row as cell, c}
-            <button
-              class="cell {cell ? 'filled' : ''} {selected ? 'placeable' : ''}"
-              on:click={() => placeSelectedAt(r, c)}
-              aria-label={"Cell " + (r + 1) + "," + (c + 1)}
-            >
-              {cell ?? ""}
-            </button>
+  <div class="main">
+    <div class="boardCard">
+      <div class="boardWrap">
+        <div class="board" bind:this={boardEl} aria-label="10 by 10 board">
+          {#each Array(GRID * GRID) as _, i}
+            <div class="cell {board[i] ? 'filled' : ''}">
+              {#if board[i]}
+                {board[i]}
+              {/if}
+            </div>
           {/each}
-        {/each}
+
+          {#if dragging && active && hoverRC}
+            <!-- Ghost overlay -->
+            {#each pieceCellsAt(active, hoverRC.r, hoverRC.c) as ccell (ccell.r + '-' + ccell.c)}
+              {#if inBounds(ccell.r, ccell.c)}
+                <div
+                  class="ghost {hoverValid ? 'ok' : 'bad'}"
+                  style="
+                    left: calc((100% / {GRID}) * {ccell.c});
+                    top: calc((100% / {GRID}) * {ccell.r});
+                    width: calc(100% / {GRID});
+                    height: calc(100% / {GRID});
+                  "
+                >
+                  {ccell.ch}
+                </div>
+              {/if}
+            {/each}
+          {/if}
+        </div>
       </div>
 
       <div class="hint">
-        {#if !selected}
-          Tap a stick below to select it. Tap it again to rotate. Then tap a board cell to place.
-        {:else}
-          Tap a board cell to place <b>{selected.text}</b>. (Must touch existing tiles after the first move.)
+        <b>How to play:</b> Drag a stick onto the board. <b>Double-tap</b> a stick to rotate.
+        {#if dragging && active}
+          <span class="status">
+            {#if hoverRC}
+              {#if hoverValid}
+                ✅ Place
+              {:else}
+                ⛔ {hoverReason}
+              {/if}
+            {:else}
+              ⬇️ Drop on the board
+            {/if}
+          </span>
         {/if}
       </div>
-    </section>
+    </div>
 
-    <!-- Actions -->
-    <section class="actions">
-      <button class="btn" on:click={rotateSelected} disabled={!selected}>
-        Rotate
-      </button>
-      <button class="btn" on:click={cancelSelection} disabled={!selected}>
-        Cancel
-      </button>
-      <button class="btn danger" on:click={resetGame}>
-        Reset
-      </button>
-    </section>
+    <div class="bagCard">
+      <div class="bagHeader">
+        <div class="bagTitle">Morpheme Bag</div>
+        <div class="bagNote">Scroll sideways. Double-tap to rotate.</div>
+      </div>
 
-    <!-- Bag -->
-    <section class="bagCard">
-      <div class="bagTitle">Morpheme Bag</div>
-      <div class="bag">
-        {#each bag as s}
-          <button
-            class="stick {s.used ? 'used' : ''} {selectedId === s.id ? 'selected' : ''}"
-            on:click={() => selectStick(s.id)}
-            disabled={s.used}
-            aria-label={"Stick " + s.text}
+      <div class="bag" bind:this={bagEl}>
+        {#each bag as p (p.id)}
+          <div
+            class="stick"
+            role="button"
+            tabindex="0"
+            on:pointerdown={(e) => onPiecePointerDown(e, p)}
           >
-            <div class="stickInner {s.orientation === 'V' ? 'v' : 'h'}">
-              {#each s.text.split('') as ch}
-                <span class="tile">{ch}</span>
+            <div class="stickMeta">
+              <span class="len">{p.letters.length}</span>
+              <span class="ori">{p.o}</span>
+              <span class="text">{p.text}</span>
+            </div>
+
+            <div class="tiles {p.o === 'V' ? 'v' : 'h'}">
+              {#each p.letters as ch, j (p.id + '-' + j)}
+                <div class="tile">{ch}</div>
               {/each}
             </div>
-          </button>
+
+            <div class="microHelp">Drag • Double-tap rotate</div>
+          </div>
         {/each}
       </div>
-
-      <div class="bagNote">
-        MVP rule: after the first placement, every new stick must touch the existing build by an edge.
-      </div>
-    </section>
-  </main>
+    </div>
+  </div>
 </div>
 
 <style>
-  :global(body) {
+  :global(body){
     margin: 0;
     font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    background: radial-gradient(circle at 20% 0%, rgba(120, 120, 255, 0.18), transparent 45%),
-      radial-gradient(circle at 80% 10%, rgba(255, 120, 220, 0.14), transparent 50%),
-      radial-gradient(circle at 50% 90%, rgba(120, 255, 220, 0.10), transparent 55%),
-      #060816;
-    color: #e8ecff;
+    color: #eef1ff;
+
+    /* constellation-ish background */
+    background:
+      radial-gradient(circle at 12% 18%, rgba(120,170,255,0.10), transparent 38%),
+      radial-gradient(circle at 75% 35%, rgba(255,255,255,0.06), transparent 40%),
+      radial-gradient(circle at 40% 85%, rgba(120,170,255,0.08), transparent 45%),
+      linear-gradient(180deg, #070a12 0%, #0b1222 55%, #070a12 100%);
+    overflow: hidden; /* prevents tiny accidental vertical scroll on iOS */
   }
 
-  .wrap {
+  /* ---- iPhone-fit layout ---- */
+  .wrap{
     max-width: 720px;
     margin: 0 auto;
-    padding: 12px;
+    padding: 10px;
     box-sizing: border-box;
-  }
 
-  .topbar {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-
-  .name {
-    font-weight: 800;
-    letter-spacing: 0.12em;
-  }
-  .tag {
-    opacity: 0.8;
-    font-size: 0.92rem;
-    margin-top: 4px;
-  }
-
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: 100svh;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
   }
 
-  .stat {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 12px;
-    padding: 8px 10px;
-    backdrop-filter: blur(8px);
-  }
-  .label {
-    font-size: 0.75rem;
-    opacity: 0.75;
-  }
-  .value {
-    font-weight: 700;
-    margin-top: 2px;
-  }
-
-  .main {
+  .topbar{
     display: grid;
-    gap: 10px;
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
-  .boardCard,
-  .bagCard {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+  .titleRow{
+    display: grid;
+    gap: 2px;
+  }
+
+  .title{
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    font-size: 1.05rem;
+  }
+
+  .subtitle{
+    font-size: 0.90rem;
+    opacity: 0.85;
+    line-height: 1.15;
+  }
+
+  .stats{
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .pill{
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.18);
+    font-size: 0.9rem;
+  }
+
+  .pill span{
+    opacity: 0.85;
+  }
+
+  .pill b{
+    font-weight: 900;
+  }
+
+  .btn{
+    padding: 7px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.10);
+    color: #eef1ff;
+    font-weight: 800;
+  }
+
+  .btn:active{
+    transform: translateY(1px);
+  }
+
+  .main{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+  }
+
+  .boardCard{
+    padding: 8px;
     border-radius: 16px;
-    padding: 10px;
-    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.14);
+    flex: 0 0 auto;
   }
 
-  .board {
+  .boardWrap{
+    display: grid;
+    place-items: center;
+  }
+
+  .board{
+    --boardSize: min(calc(100vw - 20px), 52svh);
+    --gap: clamp(2px, 0.6vw, 4px);
+
+    width: var(--boardSize);
+    height: var(--boardSize);
+    margin: 0 auto;
+
     display: grid;
     grid-template-columns: repeat(10, 1fr);
-    width: 100%;
-    aspect-ratio: 1 / 1;
-    gap: 3px;
+    gap: var(--gap);
+
+    position: relative;
+
+    /* thin, barely-noticeable grid outline */
+    outline: 1px solid rgba(255,255,255,0.10);
+    outline-offset: 6px;
+    border-radius: 14px;
   }
 
-  .cell {
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    background: rgba(0, 0, 0, 0.20);
+  .cell{
+    border-radius: calc(var(--boardSize) / 10 * 0.22);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.22);
     color: #f1f4ff;
-    font-weight: 800;
-    font-size: clamp(12px, 3.2vw, 18px);
+    font-weight: 900;
+
+    font-size: calc(var(--boardSize) / 10 * 0.56);
+
     display: grid;
     place-items: center;
     padding: 0;
-    touch-action: manipulation;
+    user-select: none;
   }
 
-  .cell.filled {
-    background: rgba(255, 255, 255, 0.10);
-    border-color: rgba(255, 255, 255, 0.18);
+  .cell.filled{
+    background: rgba(255, 255, 255, 0.11);
+    border-color: rgba(255, 255, 255, 0.20);
   }
 
-  .cell.placeable:active {
-    transform: scale(0.98);
-  }
-
-  .hint {
-    margin-top: 8px;
-    font-size: 0.9rem;
-    opacity: 0.9;
-  }
-
-  .actions {
+  .ghost{
+    position: absolute;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    place-items: center;
+    border-radius: calc(var(--boardSize) / 10 * 0.22);
+    font-weight: 900;
+    font-size: calc(var(--boardSize) / 10 * 0.56);
+    pointer-events: none;
+    user-select: none;
+    transform: translateZ(0);
   }
 
-  .btn {
-    border-radius: 14px;
-    padding: 12px 10px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.07);
-    color: #eef2ff;
+  .ghost.ok{
+    background: rgba(90, 255, 170, 0.16);
+    border: 1px solid rgba(90, 255, 170, 0.35);
+    color: #eafff5;
+  }
+
+  .ghost.bad{
+    background: rgba(255, 90, 120, 0.14);
+    border: 1px solid rgba(255, 90, 120, 0.32);
+    color: #fff0f4;
+  }
+
+  .hint{
+    margin-top: 6px;
+    font-size: 0.85rem;
+    opacity: 0.92;
+    line-height: 1.2;
+  }
+
+  .status{
+    margin-left: 10px;
     font-weight: 800;
-    letter-spacing: 0.02em;
-    touch-action: manipulation;
-  }
-  .btn:disabled {
-    opacity: 0.45;
-  }
-  .btn.danger {
-    border-color: rgba(255, 90, 90, 0.35);
   }
 
-  .bagTitle {
-    font-weight: 800;
-    margin-bottom: 8px;
-    letter-spacing: 0.06em;
+  /* ---- Bag as bottom drawer ---- */
+  .bagCard{
+    padding: 8px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.14);
+
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
-  .bag {
+  .bagHeader{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .bagTitle{
+    font-weight: 900;
+    letter-spacing: 0.04em;
+  }
+
+  .bagNote{
+    font-size: 0.85rem;
+    opacity: 0.80;
+    text-align: right;
+  }
+
+  .bag{
+    flex: 1;
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: max-content;
-    gap: 10px;
+    gap: 8px;
     overflow-x: auto;
-    padding-bottom: 6px;
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
   }
 
-  .stick {
+  .stick{
     border-radius: 14px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: rgba(0, 0, 0, 0.18);
     padding: 10px;
-    min-width: 86px;
-    touch-action: manipulation;
+    min-width: 112px;
+    touch-action: none; /* improves dragging on iOS */
+    user-select: none;
   }
 
-  .stick.selected {
-    outline: 2px solid rgba(170, 200, 255, 0.7);
+  .stick:active{
+    transform: translateY(1px);
   }
 
-  .stick.used {
-    opacity: 0.35;
+  .stickMeta{
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    opacity: 0.92;
+    font-size: 0.9rem;
   }
 
-  .stickInner {
-    display: grid;
-    gap: 4px;
-    justify-content: start;
-  }
-  .stickInner.h {
-    grid-auto-flow: column;
-    grid-auto-columns: 22px;
-  }
-  .stickInner.v {
-    grid-auto-flow: row;
-    grid-auto-rows: 22px;
+  .len, .ori{
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.07);
+    font-weight: 900;
   }
 
-  .tile {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
+  .text{
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    opacity: 0.92;
+  }
+
+  .tiles{
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .tiles.v{
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tile{
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.09);
     display: grid;
     place-items: center;
     font-weight: 900;
-    font-size: 0.85rem;
+    font-size: 1.0rem;
+    color: #f1f4ff;
   }
 
-  .bagNote {
+  .microHelp{
     margin-top: 8px;
-    font-size: 0.85rem;
-    opacity: 0.8;
+    font-size: 0.78rem;
+    opacity: 0.78;
+  }
+
+  @media (min-width: 480px){
+    .board{
+      --boardSize: min(520px, 58svh);
+    }
   }
 </style>
