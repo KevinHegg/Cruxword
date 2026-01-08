@@ -1,857 +1,713 @@
-<script>
-	import { onMount } from 'svelte';
+<script lang="ts">
+  import { onMount } from "svelte";
 
-	const GRID = 10;
+  type Ori = "H" | "V";
 
-	// --- Sample bag (swap later with JSON) ---
-	const SAMPLE_STRINGS = [
-		// 5
-		'MICRO',
-		'NEURO',
-		'CRUXS',
-		'LOGIC',
-		'STACK',
-		'WORDS',
-		'TRACE',
-		'SHARE',
-		'CLUES',
-		'PRUNE',
-		// 4
-		'OVER',
-		'ABLE',
-		'NESS',
-		'TION',
-		'MENT',
-		'ANTI',
-		'SEMI',
-		'CORE',
-		'PLAY',
-		'GRID',
-		// 3
-		'ARC',
-		'MAP',
-		'DOT',
-		'KEY',
-		'NET',
-		'VIZ',
-		'BAG',
-		'RAG',
-		'LOG',
-		'CRU',
-		// 2
-		'ED',
-		'ER',
-		'LY',
-		'IN',
-		'UP',
-		'ON',
-		'OR',
-		'IS',
-		'IT',
-		'AS',
-		// 1
-		'S',
-		'S',
-		'S',
-		'E',
-		'E',
-		'R',
-		'T',
-		'N',
-		'L',
-		'A'
-	];
+  type Stick = {
+    id: string;
+    text: string; // morpheme/word-part (1–5 chars)
+    ori: Ori; // placement orientation, never reverses letters
+    used: boolean;
+  };
 
-	const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-	const deepClone = (x) => JSON.parse(JSON.stringify(x));
-	const key = (x, y) => `${x},${y}`;
+  type Cell = string | null;
 
-	function makeId(prefix = 'p') {
-		return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
-	}
+  const SIZE = 10;
 
-	// DOM refs for sizing + hit-testing
-	let headerEl;
-	let bagEl;
-	let boardEl;
+  // ---------- Board ----------
+  let board: Cell[][] = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => null));
+  let placedCount = 0;
 
-	let boardSize = 320; // px outer square
-	let cellSize = 32; // px square
+  // ---------- Bag ----------
+  // Replace these with your real bag generator later; keep 1–5 chars.
+  const START_BAG: string[] = [
+    "CRUX", "BIO", "OVER", "ARC", "LOGS", "WORD", "MIND", "NEUR", "UN", "RE",
+    "MICRO", "META", "ION", "NESS", "ABLE", "ER", "ED", "ING", "ANTI", "PRO",
+    "SUB", "HYPER", "LUX", "GIST", "CORE", "PIVOT", "CLUE", "KEY", "S", "T",
+    "R", "D", "C", "A", "O", "U", "X"
+  ]
+    // ensure max length 5 for now (so it fits your 1–5 stick rule)
+    .map(s => s.toUpperCase())
+    .filter(s => s.length >= 1 && s.length <= 5);
 
-	// Game state
-	let pieces = [];
-	let selectedId = null; // selected stick id (bag or board)
-	let toast = '';
+  let bag: Stick[] = START_BAG.map((t, i) => ({
+    id: `s${i}-${t}`,
+    text: t,
+    ori: "H",
+    used: false
+  }));
 
-	// History
-	let history = [];
-	function snapshot() {
-		history.push(deepClone({ pieces, selectedId }));
-		if (history.length > 80) history.shift();
-	}
-	function undo() {
-		if (!history.length) return;
-		const prev = history.pop();
-		pieces = prev.pieces;
-		selectedId = prev.selectedId;
-	}
-	function reset() {
-		snapshot();
-		initGame();
-	}
+  // ---------- UI State ----------
+  let selectedId: string | null = null;
 
-	function initGame() {
-		pieces = SAMPLE_STRINGS.map((letters, i) => ({
-			id: makeId('stick'),
-			letters,
-			len: letters.length,
-			dir: 'h', // 'h' | 'v' (90° toggle, no reversal)
-			where: 'bag', // 'bag' | 'board'
-			slot: i,
-			x: null,
-			y: null
-		}));
-		selectedId = null;
-		history = [];
-		toast = '';
-	}
+  // board DOM + geometry
+  let boardEl: HTMLDivElement | null = null;
+  let boardRect: DOMRect | null = null;
 
-	// --- Responsive board sizing (no internal padding; borders are the grid) ---
-	function viewportW() {
-		return window.visualViewport?.width ?? window.innerWidth;
-	}
-	function viewportH() {
-		return window.visualViewport?.height ?? window.innerHeight;
-	}
+  // drag state (press+hold on a bag stick)
+  let dragging = false;
+  let dragPointerId: number | null = null;
+  let dragStickId: string | null = null;
+  let ghostX = 0;
+  let ghostY = 0;
+  let ghostRow: number | null = null;
+  let ghostCol: number | null = null;
+  let ghostValid = false;
+  let longPressTimer: any = null;
+  let suppressTap = false;
 
-	function recomputeBoardSize() {
-		const w = Math.floor(viewportW());
-		const h = Math.floor(viewportH());
+  // ---------- Helpers ----------
+  function densityPct() {
+    return Math.round((placedCount / (SIZE * SIZE)) * 100);
+  }
 
-		const headerH = headerEl?.getBoundingClientRect().height ?? 110;
-		const bagH = bagEl?.getBoundingClientRect().height ?? 190;
+  function getStick(id: string | null) {
+    if (!id) return null;
+    return bag.find(b => b.id === id) ?? null;
+  }
 
-		// leave a smallIN for safety + safari bars
-		const availW = w - 20;
-		const availH = h - headerH - bagH - 16;
+  function lettersFor(stick: Stick) {
+    return stick.text.split("");
+  }
 
-		const max = Math.max(220, Math.min(availW, availH));
+  function boardIsEmpty() {
+    return placedCount === 0;
+  }
 
-		// force exact 10 cells, no gaps
-		const cs = Math.max(20, Math.floor(max / GRID));
-		cellSize = cs;
-		boardSize = cs * GRID;
-	}
+  function inBounds(r: number, c: number) {
+    return r >= 0 && r < SIZE && c >= 0 && c < SIZE;
+  }
 
-	onMount(() => {
-		initGame();
-		recomputeBoardSize();
+  function computePlacement(stick: Stick, startR: number, startC: number) {
+    const letters = lettersFor(stick);
+    const coords: Array<{ r: number; c: number; ch: string }> = [];
 
-		const vv = window.visualViewport;
-		const onResize = () => recomputeBoardSize();
+    for (let i = 0; i < letters.length; i++) {
+      const r = stick.ori === "H" ? startR : startR + i;
+      const c = stick.ori === "H" ? startC + i : startC;
+      if (!inBounds(r, c)) return null;
+      coords.push({ r, c, ch: letters[i] });
+    }
+    return coords;
+  }
 
-		window.addEventListener('resize', onResize, { passive: true });
-		vv?.addEventListener('resize', onResize, { passive: true });
-		vv?.addEventListener('scroll', onResize, { passive: true });
+  // Rules (MVP):
+  // - Must fit in bounds
+  // - Cells can be empty OR same letter
+  // - If board not empty, placement must TOUCH existing tiles (adjacent) OR overlap (same letter)
+  // - Overlap count must be <= 1 (your “one intersection tile” rule)
+  function isLegalPlacement(stick: Stick, startR: number, startC: number) {
+    const coords = computePlacement(stick, startR, startC);
+    if (!coords) return { ok: false, coords: null };
 
-		return () => {
-			window.removeEventListener('resize', onResize);
-			vv?.removeEventListener('resize', onResize);
-			vv?.removeEventListener('scroll', onResize);
-		};
-	});
+    let overlapCount = 0;
+    let touches = false;
 
-	// --- Derived ---
-	$: bagPieces = pieces
-		.filter((p) => p.where === 'bag')
-		.slice()
-		.sort((a, b) => a.slot - b.slot);
+    for (const { r, c, ch } of coords) {
+      const existing = board[r][c];
+      if (existing) {
+        if (existing !== ch) return { ok: false, coords: null };
+        overlapCount++;
+      } else {
+        // adjacency check (orthogonal neighbors)
+        const nbrs = [
+          [r - 1, c],
+          [r + 1, c],
+          [r, c - 1],
+          [r, c + 1]
+        ];
+        for (const [rr, cc] of nbrs) {
+          if (inBounds(rr, cc) && board[rr][cc]) {
+            touches = true;
+            break;
+          }
+        }
+      }
+    }
 
-	$: boardPieces = pieces.filter((p) => p.where === 'board');
+    if (overlapCount > 1) return { ok: false, coords: null };
 
-	function cellsOf(p, override = null) {
-		const x0 = override?.x ?? p.x;
-		const y0 = override?.y ?? p.y;
-		const dir = override?.dir ?? p.dir;
-		const out = [];
-		for (let i = 0; i < p.len; i++) {
-			const x = dir === 'h' ? x0 + i : x0;
-			const y = dir === 'h' ? y0 : y0 + i;
-			out.push({ x, y, ch: p.letters[i] ?? '?' });
-		}
-		return out;
-	}
+    if (!boardIsEmpty()) {
+      // must connect by touch or overlap
+      if (!touches && overlapCount === 0) return { ok: false, coords: null };
+    }
 
-	function inBounds(x, y) {
-		return x >= 0 && x < GRID && y >= 0 && y < GRID;
-	}
+    return { ok: true, coords };
+  }
 
-	// occ: cell -> array of {id,ch}
-	$: occ = (() => {
-		const m = new Map();
-		for (const p of boardPieces) {
-			for (const c of cellsOf(p)) {
-				if (!inBounds(c.x, c.y)) continue;
-				const k = key(c.x, c.y);
-				if (!m.has(k)) m.set(k, []);
-				m.get(k).push({ id: p.id, ch: c.ch });
-			}
-		}
-		return m;
-	})();
+  function placeStick(stick: Stick, startR: number, startC: number) {
+    const res = isLegalPlacement(stick, startR, startC);
+    if (!res.ok || !res.coords) return false;
 
-	function cellArr(x, y) {
-		return occ.get(key(x, y)) ?? [];
-	}
+    // apply
+    let newlyFilled = 0;
+    const next = board.map(row => row.slice());
 
-	function topLetter(x, y) {
-		const arr = cellArr(x, y);
-		if (!arr.length) return '';
-		// last placed wins
-		for (let i = pieces.length - 1; i >= 0; i--) {
-			const p = pieces[i];
-			if (p.where !== 'board') continue;
-			const isHere = cellsOf(p).some((c) => c.x === x && c.y === y);
-			if (isHere) {
-				const c = cellsOf(p).find((c) => c.x === x && c.y === y);
-				return c?.ch ?? arr[arr.length - 1].ch;
-			}
-		}
-		return arr[arr.length - 1].ch;
-	}
+    for (const { r, c, ch } of res.coords) {
+      if (!next[r][c]) newlyFilled++;
+      next[r][c] = ch;
+    }
 
-	// Show quick stats
-	$: tilesPlaced = occ.size;
-	$: densityPct = Math.round((tilesPlaced / (GRID * GRID)) * 100);
+    board = next;
+    placedCount += newlyFilled;
 
-	// --- Rotation icon rules (90° only, keep order) ---
-	function toggleDir(id) {
-		snapshot();
-		const p = pieces.find((x) => x.id === id);
-		if (!p) return;
-		p.dir = p.dir === 'h' ? 'v' : 'h';
-	}
+    // mark used (so it disappears / greys out in bag)
+    bag = bag.map(s => (s.id === stick.id ? { ...s, used: true } : s));
+    if (selectedId === stick.id) selectedId = null;
 
-	// --- Legality: no triple stacks; any pair overlaps at most 1 cell ---
-	function overlapCount(a, b, aCells, bCells) {
-		const bSet = new Set(bCells.map((c) => key(c.x, c.y)));
-		let ct = 0;
-		for (const c of aCells) if (bSet.has(key(c.x, c.y))) ct++;
-		return ct;
-	}
+    return true;
+  }
 
-	function wouldBeLegalPlacement(moving, nx, ny, ndir, ignoreId = null) {
-		const p = moving;
-		const newCells = cellsOf(p, { x: nx, y: ny, dir: ndir });
+  function rotateStick(id: string) {
+    bag = bag.map(s => (s.id === id ? { ...s, ori: s.ori === "H" ? "V" : "H" } : s));
+  }
 
-		// in bounds (hard)
-		for (const c of newCells) {
-			if (!inBounds(c.x, c.y)) return { ok: false, reason: 'Out of bounds.' };
-		}
+  function resetGame() {
+    board = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => null));
+    placedCount = 0;
+    selectedId = null;
+    dragging = false;
+    dragStickId = null;
+    ghostRow = ghostCol = null;
 
-		// no triple stacks
-		for (const c of newCells) {
-			const arr = cellArr(c.x, c.y).filter((z) => z.id !== ignoreId);
-			if (arr.length >= 2) return { ok: false, reason: 'Too many overlaps in one cell.' };
-		}
+    bag = START_BAG.map((t, i) => ({
+      id: `s${i}-${t}`,
+      text: t,
+      ori: "H",
+      used: false
+    }));
+  }
 
-		// per-pair overlap <= 1
-		for (const other of boardPieces) {
-			if (other.id === ignoreId) continue;
-			const otherCells = cellsOf(other);
-			const ct = overlapCount(p, other, newCells, otherCells);
-			if (ct > 1) return { ok: false, reason: 'Two sticks can intersect at only one tile.' };
-		}
+  function refreshBoardRect() {
+    if (!boardEl) return;
+    boardRect = boardEl.getBoundingClientRect();
+  }
 
-		return { ok: true, reason: '' };
-	}
+  function pointerToCell(x: number, y: number) {
+    if (!boardRect) return { r: null, c: null };
 
-	function placeBagPieceAt(id, x, y) {
-		const p = pieces.find((z) => z.id === id);
-		if (!p || p.where !== 'bag') return;
+    const px = x - boardRect.left;
+    const py = y - boardRect.top;
 
-		// clamp origin so the whole stick fits
-		const maxX = p.dir === 'h' ? GRID - p.len : GRID - 1;
-		const maxY = p.dir === 'v' ? GRID - p.len : GRID - 1;
-		const nx = clamp(x, 0, maxX);
-		const ny = clamp(y, 0, maxY);
+    if (px < 0 || py < 0 || px > boardRect.width || py > boardRect.height) return { r: null, c: null };
 
-		const check = wouldBeLegalPlacement(p, nx, ny, p.dir, null);
-		if (!check.ok) {
-			toast = check.reason;
-			return;
-		}
+    // board is 10x10, no internal padding, tiny gap
+    const cellW = boardRect.width / SIZE;
+    const cellH = boardRect.height / SIZE;
 
-		snapshot();
-		p.where = 'board';
-		p.x = nx;
-		p.y = ny;
-		toast = '';
-	}
+    const c = Math.floor(px / cellW);
+    const r = Math.floor(py / cellH);
 
-	function moveBoardPieceTo(id, x, y, anchorOffset = { dx: 0, dy: 0 }) {
-		const p = pieces.find((z) => z.id === id);
-		if (!p || p.where !== 'board') return;
+    if (!inBounds(r, c)) return { r: null, c: null };
+    return { r, c };
+  }
 
-		const maxX = p.dir === 'h' ? GRID - p.len : GRID - 1;
-		const maxY = p.dir === 'v' ? GRID - p.len : GRID - 1;
+  // ---------- Bag interactions ----------
+  function onBagStickPointerDown(e: PointerEvent, id: string) {
+    const stick = bag.find(s => s.id === id);
+    if (!stick || stick.used) return;
 
-		let nx = x - anchorOffset.dx;
-		let ny = y - anchorOffset.dy;
+    suppressTap = false;
 
-		nx = clamp(nx, 0, maxX);
-		ny = clamp(ny, 0, maxY);
+    // long-press starts drag (prevents Safari double-tap zoom behavior)
+    longPressTimer = setTimeout(() => {
+      suppressTap = true;
+      startDrag(e, id);
+    }, 140);
+  }
 
-		const check = wouldBeLegalPlacement(p, nx, ny, p.dir, p.id);
-		if (!check.ok) {
-			toast = check.reason;
-			return;
-		}
+  function onBagStickPointerUp(e: PointerEvent, id: string) {
+    if (longPressTimer) clearTimeout(longPressTimer);
+    longPressTimer = null;
 
-		p.x = nx;
-		p.y = ny;
-		toast = '';
-	}
+    // if we didn't start a drag, treat as tap select
+    if (!suppressTap && !dragging) {
+      const stick = bag.find(s => s.id === id);
+      if (!stick || stick.used) return;
+      selectedId = selectedId === id ? null : id;
+    }
+  }
 
-	// --- Hit testing: client -> board cell (no padding, no gap) ---
-	function clientToCell(clientX, clientY) {
-		const r = boardEl?.getBoundingClientRect();
-		if (!r) return null;
+  function startDrag(e: PointerEvent, id: string) {
+    const stick = bag.find(s => s.id === id);
+    if (!stick || stick.used) return;
 
-		const lx = clientX - r.left;
-		const ly = clientY - r.top;
+    dragging = true;
+    dragPointerId = e.pointerId;
+    dragStickId = id;
 
-		const x = Math.floor(lx / cellSize);
-		const y = Math.floor(ly / cellSize);
+    refreshBoardRect();
 
-		if (x < 0 || y < 0 || x >= GRID || y >= GRID) return null;
-		return { x, y };
-	}
+    ghostX = e.clientX;
+    ghostY = e.clientY;
 
-	// --- Select logic (no double-tap; explicit controls) ---
-	function select(id) {
-		selectedId = id;
-		toast = '';
-	}
+    const { r, c } = pointerToCell(e.clientX, e.clientY);
+    ghostRow = r;
+    ghostCol = c;
+    ghostValid = r !== null && c !== null ? isLegalPlacement(stick, r, c).ok : false;
 
-	function onBoardCellTap(x, y) {
-		if (!selectedId) return;
+    // capture pointer so move/up keep firing
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
 
-		const p = pieces.find((z) => z.id === selectedId);
-		if (!p) return;
+  function onGlobalPointerMove(e: PointerEvent) {
+    if (!dragging || dragPointerId !== e.pointerId) return;
+    refreshBoardRect();
 
-		if (p.where === 'bag') placeBagPieceAt(p.id, x, y);
-		else if (p.where === 'board') {
-			// move origin to tapped cell (simple)
-			snapshot();
-			moveBoardPieceTo(p.id, x, y, { dx: 0, dy: 0 });
-		}
-	}
+    ghostX = e.clientX;
+    ghostY = e.clientY;
 
-	// --- Drag from bag (touch-first) ---
-	let bagDrag = null; // { id, active, x, y }
-	function bagTouchStart(e, id) {
-		e.preventDefault();
-		select(id);
-		const t = e.touches[0];
-		bagDrag = { id, active: true, x: t.clientX, y: t.clientY };
-	}
-	function bagTouchMove(e) {
-		if (!bagDrag?.active) return;
-		e.preventDefault();
-		const t = e.touches[0];
-		bagDrag.x = t.clientX;
-		bagDrag.y = t.clientY;
-	}
-	function bagTouchEnd(e) {
-		if (!bagDrag?.active) return;
-		e.preventDefault();
-		const cell = clientToCell(bagDrag.x, bagDrag.y);
-		if (cell) placeBagPieceAt(bagDrag.id, cell.x, cell.y);
-		bagDrag = null;
-	}
+    const stick = getStick(dragStickId);
+    const { r, c } = pointerToCell(e.clientX, e.clientY);
+    ghostRow = r;
+    ghostCol = c;
+    ghostValid = !!stick && r !== null && c !== null ? isLegalPlacement(stick, r, c).ok : false;
+  }
 
-	// --- Drag on board (touch-first) ---
-	let boardDrag = null; // { id, dx,dy } dx/dy = anchor offset within the stick
-	function pickTopPieceIdAtCell(x, y) {
-		// last placed wins
-		for (let i = pieces.length - 1; i >= 0; i--) {
-			const p = pieces[i];
-			if (p.where !== 'board') continue;
-			const hit = cellsOf(p).find((c) => c.x === x && c.y === y);
-			if (hit) return p.id;
-		}
-		return null;
-	}
+  function onGlobalPointerUp(e: PointerEvent) {
+    if (!dragging || dragPointerId !== e.pointerId) return;
 
-	function boardTouchStart(e, x, y) {
-		e.preventDefault();
-		const id = pickTopPieceIdAtCell(x, y);
-		if (!id) {
-			onBoardCellTap(x, y);
-			return;
-		}
+    const stick = getStick(dragStickId);
+    if (stick && ghostRow !== null && ghostCol !== null) {
+      placeStick(stick, ghostRow, ghostCol);
+    }
 
-		select(id);
+    dragging = false;
+    dragPointerId = null;
+    dragStickId = null;
+    ghostRow = ghostCol = null;
+    ghostValid = false;
+  }
 
-		// anchor offset = where inside the stick you grabbed (so it feels right)
-		const p = pieces.find((z) => z.id === id);
-		const hitIndex = cellsOf(p).findIndex((c) => c.x === x && c.y === y);
-		const dx = p.dir === 'h' ? hitIndex : 0;
-		const dy = p.dir === 'v' ? hitIndex : 0;
+  // ---------- Board tap-to-place ----------
+  function onBoardCellTap(r: number, c: number) {
+    const stick = getStick(selectedId);
+    if (!stick || stick.used) return;
+    placeStick(stick, r, c);
+  }
 
-		snapshot();
-		boardDrag = { id, dx, dy };
-	}
+  onMount(() => {
+    refreshBoardRect();
+    window.addEventListener("resize", refreshBoardRect, { passive: true });
 
-	function boardTouchMove(e) {
-		if (!boardDrag) return;
-		e.preventDefault();
-		const t = e.touches[0];
-		const cell = clientToCell(t.clientX, t.clientY);
-		if (!cell) return;
-		moveBoardPieceTo(boardDrag.id, cell.x, cell.y, { dx: boardDrag.dx, dy: boardDrag.dy });
-	}
+    // global pointer listeners for drag
+    window.addEventListener("pointermove", onGlobalPointerMove, { passive: false });
+    window.addEventListener("pointerup", onGlobalPointerUp, { passive: false });
 
-	function boardTouchEnd(e) {
-		if (!boardDrag) return;
-		e.preventDefault();
-		boardDrag = null;
-	}
-
-	// --- Remove stick back to bag (explicit button on selected stick) ---
-	function returnSelectedToBag() {
-		if (!selectedId) return;
-		const p = pieces.find((z) => z.id === selectedId);
-		if (!p || p.where !== 'board') return;
-		snapshot();
-		p.where = 'bag';
-		p.x = null;
-		p.y = null;
-	}
-
-	// --- Submit (placeholder) ---
-	function submit() {
-		alert(`Submitted (stub)\nTiles: ${tilesPlaced}/100\nDensity: ${densityPct}%`);
-	}
+    return () => {
+      window.removeEventListener("resize", refreshBoardRect);
+      window.removeEventListener("pointermove", onGlobalPointerMove);
+      window.removeEventListener("pointerup", onGlobalPointerUp);
+    };
+  });
 </script>
 
+<svelte:window on:contextmenu|preventDefault />
+
 <div class="app">
-	<header class="top" bind:this={headerEl}>
-		<div class="topRow">
-			<div class="title">CRUXWORD</div>
-			<div class="rightMini">
-				<span class="miniPill">Bag {bagPieces.length}</span>
-			</div>
-		</div>
+  <header class="top">
+    <div class="titleRow">
+      <div class="title">CRUXWORD <span class="bagCount">(Bag {bag.filter(b => !b.used).length})</span></div>
+      <button class="iconBtn" aria-label="Help" title="Help">?</button>
+    </div>
 
-		<div class="statsRow">
-			<div class="pill">Tiles <b>{tilesPlaced}/100</b></div>
-			<div class="pill">Density <b>{densityPct}%</b></div>
+    <div class="statsRow">
+      <div class="pill">Tiles <strong>{placedCount}/100</strong></div>
+      <div class="pill">Density <strong>{densityPct()}%</strong></div>
 
-			<div class="headerBtns">
-				<button class="btn" on:click={reset}>Reset</button>
-				<button class="btn primary" on:click={submit}>Submit</button>
-			</div>
-		</div>
+      <div class="spacer"></div>
 
-		{#if toast}
-			<div class="toast">{toast}</div>
-		{/if}
-	</header>
+      <button class="btn" on:click={resetGame}>Reset</button>
+    </div>
+  </header>
 
-	<main class="mid">
-		<div
-			class="board"
-			bind:this={boardEl}
-			style="width:{boardSize}px;height:{boardSize}px;grid-template-columns:repeat({GRID},{cellSize}px);grid-template-rows:repeat({GRID},{cellSize}px);"
-			on:touchmove|preventDefault={boardTouchMove}
-			on:touchend|preventDefault={boardTouchEnd}
-		>
-			{#each Array(GRID) as _, y}
-				{#each Array(GRID) as __, x}
-					<div
-						class="cell {cellArr(x, y).length ? 'filled' : ''} {cellArr(x, y).length > 1 ? 'overlap' : ''}"
-						style="width:{cellSize}px;height:{cellSize}px;"
-						on:touchstart|preventDefault={(e) => boardTouchStart(e, x, y)}
-					>
-						<span class="ch" style={`font-size:${Math.max(12, Math.floor(cellSize * 0.58))}px;`}>
-							{topLetter(x, y)}
-						</span>
-					</div>
-				{/each}
-			{/each}
-		</div>
-	</main>
+  <main class="main">
+    <!-- Board -->
+    <section class="boardWrap">
+      <div class="board" bind:this={boardEl}>
+        {#each board as row, r}
+          {#each row as cell, c}
+            <button
+              class="cell {cell ? 'filled' : ''}"
+              style="--r:{r};--c:{c}"
+              on:click={() => onBoardCellTap(r, c)}
+              aria-label={`Cell ${r + 1}, ${c + 1}`}
+            >
+              {#if cell}{cell}{/if}
+            </button>
+          {/each}
+        {/each}
 
-	<footer class="bag" bind:this={bagEl}>
-		<div class="bagHead">
-			<div class="bagTitle">Morphemes</div>
+        <!-- Ghost preview while dragging -->
+        {#if dragging}
+          {#each (getStick(dragStickId) ? lettersFor(getStick(dragStickId)!) : []) as ch, i}
+            {#if ghostRow !== null && ghostCol !== null}
+              <div
+                class="ghostCell {ghostValid ? 'ok' : 'bad'}"
+                style="
+                  --gr:{ghostRow + (getStick(dragStickId)!.ori === 'V' ? i : 0)};
+                  --gc:{ghostCol + (getStick(dragStickId)!.ori === 'H' ? i : 0)};
+                "
+              >
+                {ch}
+              </div>
+            {/if}
+          {/each}
+        {/if}
+      </div>
+    </section>
 
-			<div class="bagBtns">
-				<button class="iconBtn" on:click={undo} disabled={history.length === 0} aria-label="Undo" title="Undo">
-					↶
-				</button>
-				<button
-					class="iconBtn"
-					on:click={() => selectedId && toggleDir(selectedId)}
-					disabled={!selectedId}
-					aria-label="Rotate selected"
-					title="Rotate selected"
-				>
-					⦿
-				</button>
-				<button
-					class="iconBtn"
-					on:click={returnSelectedToBag}
-					disabled={!selectedId || !pieces.find((p) => p.id === selectedId && p.where === 'board')}
-					aria-label="Return selected"
-					title="Return selected"
-				>
-					⟲
-				</button>
-			</div>
-		</div>
+    <!-- Bag -->
+    <section class="bag">
+      <div class="bagHeader">
+        <div class="bagTitle">Morphemes</div>
+        <div class="bagHint">Tap selects • Press+hold drags</div>
+      </div>
 
-		<div class="bagGrid">
-			{#each bagPieces as p (p.id)}
-				<div class="stickCard {selectedId === p.id ? 'sel' : ''}">
-					<div class="stickTop">
-						<div class="len">{p.len}</div>
+      <div class="bagGrid" aria-label="Morpheme bag (scroll sideways)">
+        {#each bag as stick (stick.id)}
+          <div class="stickCard {stick.used ? 'used' : ''} {selectedId === stick.id ? 'selected' : ''}">
+            <button
+              class="stickBtn"
+              disabled={stick.used}
+              on:pointerdown={(e) => onBagStickPointerDown(e, stick.id)}
+              on:pointerup={(e) => onBagStickPointerUp(e, stick.id)}
+              on:pointercancel={() => { if (longPressTimer) clearTimeout(longPressTimer); longPressTimer = null; }}
+              aria-label={`Stick ${stick.text}`}
+            >
+              <div class="tiles">
+                {#each lettersFor(stick) as ch}
+                  <span class="t">{ch}</span>
+                {/each}
+              </div>
 
-						<!-- Rotation icon: circle + line, tap toggles h/v (90° only) -->
-						<button class="rotBtn" on:click={() => toggleDir(p.id)} aria-label="Rotate">
-							<span class="rotGlyph">
-								{#if p.dir === 'h'}—{:else}|{/if}
-							</span>
-						</button>
-					</div>
+              <!-- Rotate icon inline with tiles; 90° toggle only -->
+              <button
+                class="rotBtn"
+                disabled={stick.used}
+                on:click|stopPropagation={() => rotateStick(stick.id)}
+                aria-label="Rotate"
+                title="Rotate 90°"
+              >
+                ⟳
+              </button>
+            </button>
 
-					<!-- Whole card supports tap select + drag-to-board -->
-					<div
-						class="tiles {p.dir === 'v' ? 'tilesV' : ''}"
-						on:click={() => select(p.id)}
-						on:touchstart|preventDefault={(e) => bagTouchStart(e, p.id)}
-						on:touchmove|preventDefault={bagTouchMove}
-						on:touchend|preventDefault={bagTouchEnd}
-					>
-						{#each p.letters.split('') as ch}
-							<div class="tile"><span>{ch}</span></div>
-						{/each}
-					</div>
-				</div>
-			{/each}
-		</div>
-
-		<div class="hint">
-			Tap to select • Tap board to place • Drag sticks onto board • Drag placed stick to move • ⦿ rotates 90°
-		</div>
-	</footer>
+            <div class="oriBadge" aria-label="Orientation">{stick.ori}</div>
+          </div>
+        {/each}
+      </div>
+    </section>
+  </main>
 </div>
 
 <style>
-	:global(html),
-	:global(body) {
-		margin: 0;
-		padding: 0;
-		height: 100%;
-		background: radial-gradient(circle at 30% 20%, #0a1630 0%, #060b16 45%, #050812 100%);
-		color: #e7ebf2;
-		font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-		-webkit-text-size-adjust: 100%;
-	}
+  /* -------- iPhone sizing + no vertical scroll goal -------- */
+  :global(html),
+  :global(body) {
+    height: 100%;
+    margin: 0;
+    background: radial-gradient(1200px 800px at 30% 10%, #0b1a33, #060a12);
+    color: #e9eef7;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    -webkit-text-size-adjust: 100%;
+  }
 
-	:global(*) {
-		box-sizing: border-box;
-		-webkit-tap-highlight-color: transparent;
-	}
+  /* Helps reduce annoying tap behavior; we avoid double-tap handlers entirely */
+  :global(*) {
+    -webkit-tap-highlight-color: transparent;
+  }
 
-	.app {
-		height: 100svh;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden; /* no vertical scroll */
-		padding-bottom: env(safe-area-inset-bottom);
-	}
+  .app {
+    height: 100svh; /* iOS safe viewport */
+    padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
 
-	/* ---------- Header ---------- */
-	.top {
-		padding: 10px 12px 6px;
-	}
+  .top {
+    flex: 0 0 auto;
+  }
 
-	.topRow {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 10px;
-	}
+  .titleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
 
-	.title {
-		font-weight: 900;
-		letter-spacing: 0.12em;
-		font-size: 20px;
-	}
+  .title {
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    font-size: 22px;
+    line-height: 1.1;
+  }
 
-	.rightMini {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
+  .bagCount {
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+    margin-left: 6px;
+    font-size: 14px;
+  }
 
-	.miniPill {
-		font-size: 12px;
-		opacity: 0.8;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.02);
-		padding: 6px 10px;
-		border-radius: 14px;
-		white-space: nowrap;
-	}
+  .iconBtn {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    color: #e9eef7;
+    font-size: 18px;
+    touch-action: manipulation;
+  }
 
-	.statsRow {
-		margin-top: 10px;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex-wrap: wrap; /* keep everything visible on iPhone */
-	}
+  .statsRow {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
 
-	.pill {
-		padding: 8px 10px;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.02);
-		backdrop-filter: blur(6px);
-		font-size: 13px;
-		white-space: nowrap;
-	}
+  .pill {
+    padding: 10px 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.04);
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .pill strong {
+    font-size: 18px;
+    margin-left: 6px;
+  }
 
-	.headerBtns {
-		margin-left: auto;
-		display: flex;
-		gap: 8px;
-		white-space: nowrap;
-	}
+  .spacer {
+    flex: 1;
+  }
 
-	.btn {
-		padding: 8px 10px;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.03);
-		color: inherit;
-		font-weight: 800;
-		font-size: 13px;
-	}
+  .btn {
+    padding: 10px 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    color: #e9eef7;
+    font-weight: 700;
+    touch-action: manipulation;
+    white-space: nowrap;
+  }
 
-	.btn.primary {
-		border-color: rgba(92, 203, 255, 0.35);
-		background: rgba(92, 203, 255, 0.12);
-	}
+  .main {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 10px;
+    min-height: 0; /* critical for iOS layout */
+  }
 
-	.toast {
-		margin-top: 8px;
-		font-size: 13px;
-		color: rgba(255, 200, 140, 0.95);
-	}
+  /* -------- Board -------- */
+  .boardWrap {
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 
-	/* ---------- Board ---------- */
-	.mid {
-		flex: 1;
-		min-height: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0 10px;
-	}
+  .board {
+    /* Square board that fits screen */
+    --board: min(94vw, 560px);
+    width: var(--board);
+    aspect-ratio: 1 / 1;
 
-	.board {
-		display: grid;
-		border-radius: 18px;
-		overflow: hidden;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.015);
-		backdrop-filter: blur(7px);
+    /* tight grid (no padding inside cells) */
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    grid-template-rows: repeat(10, 1fr);
+    gap: 2px;
 
-		/* critical: touch-first */
-		touch-action: none;
-		user-select: none;
-	}
+    border-radius: 22px;
+    padding: 10px;
+    box-sizing: border-box;
 
-	.cell {
-		display: grid;
-		place-items: center;
+    border: 1px solid rgba(255,255,255,0.10);
+    background:
+      radial-gradient(1000px 800px at 25% 20%, rgba(71, 137, 255, 0.14), rgba(0,0,0,0)),
+      rgba(255,255,255,0.03);
+    position: relative;
+    overflow: hidden;
+  }
 
-		/* internal grid lines (no padding, no gaps) */
-		border-right: 1px solid rgba(255, 255, 255, 0.05);
-		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-		background: rgba(255, 255, 255, 0.008);
-	}
+  .cell {
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(0,0,0,0.18);
+    color: #e9eef7;
 
-	/* remove right border on last col, bottom border on last row (via nth-child math) is annoying; tolerate it */
-	.cell.filled {
-		background: rgba(255, 255, 255, 0.12);
-	}
+    display: grid;
+    place-items: center;
 
-	.cell.overlap {
-		box-shadow: inset 0 0 0 2px rgba(92, 203, 255, 0.25);
-	}
+    /* BIGGER letters */
+    font-weight: 900;
+    font-size: clamp(16px, 3.2vw, 22px);
+    letter-spacing: 0.08em;
 
-	.ch {
-		font-weight: 900;
-		letter-spacing: 0.06em;
-		color: rgba(255, 255, 255, 0.95);
-		pointer-events: none;
-	}
+    /* Avoid iOS zoom-on-tap weirdness */
+    touch-action: manipulation;
+    user-select: none;
+  }
 
-	/* ---------- Bag ---------- */
-	.bag {
-		padding: 10px 12px 10px;
-		border-top: 1px solid rgba(255, 255, 255, 0.06);
-		background: rgba(255, 255, 255, 0.02);
-	}
+  .cell.filled {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
 
-	.bagHead {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		margin-bottom: 8px;
-	}
+  .ghostCell {
+    position: absolute;
+    width: calc((100% - 20px - 9 * 2px) / 10); /* board padding + gap math */
+    height: calc((100% - 20px - 9 * 2px) / 10);
+    left: calc(10px + var(--gc) * ( (100% - 20px - 9 * 2px) / 10 + 2px ));
+    top:  calc(10px + var(--gr) * ( (100% - 20px - 9 * 2px) / 10 + 2px ));
 
-	.bagTitle {
-		font-weight: 900;
-		font-size: 18px;
-		letter-spacing: 0.06em;
-	}
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    font-size: clamp(16px, 3.2vw, 22px);
+    letter-spacing: 0.08em;
+    pointer-events: none;
 
-	.bagBtns {
-		display: flex;
-		gap: 10px;
-	}
+    background: rgba(255,255,255,0.12);
+    border: 1px dashed rgba(255,255,255,0.35);
+    opacity: 0.85;
+  }
+  .ghostCell.ok { outline: 2px solid rgba(110, 255, 182, 0.45); }
+  .ghostCell.bad { outline: 2px solid rgba(255, 120, 120, 0.45); }
 
-	.iconBtn {
-		width: 42px;
-		height: 42px;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.03);
-		color: inherit;
-		font-size: 18px;
-		font-weight: 900;
-		display: grid;
-		place-items: center;
-	}
+  /* -------- Bag (3 visible rows) -------- */
+  .bag {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
 
-	.iconBtn:disabled {
-		opacity: 0.35;
-	}
+  .bagHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
 
-	/* Two rows of morphemes, horizontally scrollable */
-	.bagGrid {
-		display: grid;
-		grid-auto-flow: column;
-		grid-template-rows: repeat(2, auto);
-		gap: 10px;
-		overflow-x: auto;
-		padding-bottom: 6px;
-		scrollbar-width: none;
-		touch-action: pan-x;
-	}
-	.bagGrid::-webkit-scrollbar {
-		display: none;
-	}
+  .bagTitle {
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+  }
 
-	.stickCard {
-		min-width: 158px;
-		border-radius: 18px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(255, 255, 255, 0.03);
-		padding: 10px;
-	}
+  .bagHint {
+    font-size: 12px;
+    opacity: 0.7;
+    white-space: nowrap;
+  }
 
-	.stickCard.sel {
-		border-color: rgba(92, 203, 255, 0.4);
-		background: rgba(92, 203, 255, 0.08);
-	}
+  .bagGrid {
+    /* 3 rows visible, scroll sideways */
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(3, auto);
+    gap: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
 
-	.stickTop {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: 8px;
-	}
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    padding: 10px;
+  }
 
-	.len {
-		width: 30px;
-		height: 30px;
-		border-radius: 12px;
-		display: grid;
-		place-items: center;
-		font-weight: 900;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(0, 0, 0, 0.2);
-		font-size: 13px;
-	}
+  .stickCard {
+    position: relative;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.04);
+  }
 
-	.rotBtn {
-		width: 34px;
-		height: 34px;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(0, 0, 0, 0.18);
-		color: inherit;
-		display: grid;
-		place-items: center;
-		font-weight: 900;
-	}
+  .stickCard.selected {
+    border-color: rgba(135, 199, 255, 0.55);
+    box-shadow: 0 0 0 2px rgba(135, 199, 255, 0.18);
+  }
 
-	/* circle + line illusion */
-	.rotGlyph {
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
-		border: 2px solid rgba(255, 255, 255, 0.6);
-		display: grid;
-		place-items: center;
-		font-size: 14px;
-		line-height: 1;
-		color: rgba(255, 255, 255, 0.9);
-	}
+  .stickCard.used {
+    opacity: 0.45;
+    filter: grayscale(0.2);
+  }
 
-	.tiles {
-		display: grid;
-		grid-auto-flow: column;
-		gap: 6px;
-		justify-content: center;
+  .stickBtn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    user-select: none;
 
-		/* critical for touch drag */
-		touch-action: none;
-		user-select: none;
-	}
+    /* allow horizontal scrolling while still supporting long-press drag */
+    touch-action: manipulation;
+  }
 
-	.tiles.tilesV {
-		grid-auto-flow: row;
-	}
+  .tiles {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+  }
 
-	.tile {
-		width: 28px;
-		height: 28px;
-		border-radius: 10px;
-		display: grid;
-		place-items: center;
-		background: rgba(255, 255, 255, 0.12);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-	}
+  .t {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: rgba(0,0,0,0.22);
+    border: 1px solid rgba(255,255,255,0.10);
+    font-weight: 900;
+    font-size: 16px;
+    letter-spacing: 0.08em;
+  }
 
-	.tile span {
-		font-weight: 900;
-		font-size: 14px;
-		letter-spacing: 0.06em;
-	}
+  .rotBtn {
+    width: 38px;
+    height: 38px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    color: #e9eef7;
+    font-size: 18px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .rotBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-	.hint {
-		margin-top: 6px;
-		font-size: 12px;
-		opacity: 0.8;
-	}
+  .oriBadge {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    font-size: 11px;
+    opacity: 0.75;
+    padding: 3px 7px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(0,0,0,0.16);
+    pointer-events: none;
+  }
 </style>
