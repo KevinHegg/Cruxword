@@ -127,8 +127,7 @@
 				switch (e.key.toLowerCase()) {
 					case 'r':
 						e.preventDefault();
-						if (selectedPlacedSid) rotateSelectedPlaced();
-						else if (selectedSid) toggleStickOrientation(selectedSid);
+						if (selectedSid) toggleStickOrientation(selectedSid);
 						break;
 					case 'u':
 						e.preventDefault();
@@ -160,7 +159,13 @@
 	function startNewGame() {
 		bag = pickRandomBag();
 		bagIssues = validateBagShape(bag);
-		sticks = bagToSticks(bag);
+		let newSticks = bagToSticks(bag);
+		// Shuffle sticks for random layout
+		for (let i = newSticks.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[newSticks[i], newSticks[j]] = [newSticks[j], newSticks[i]];
+		}
+		sticks = newSticks;
 		board = createEmptyBoard(10, 10);
 		history = [];
 		redoHistory = [];
@@ -344,7 +349,7 @@
 				(e.target as HTMLElement).setPointerCapture(e.pointerId);
 			}
 			e.preventDefault();
-		}, 200); // 200ms hold to start drag
+		}, 400); // 400ms hold to start drag (longer to prevent accidental moves)
 	}
 	
 	function handleCellPointerUp(r: number, c: number, e: MouseEvent | PointerEvent) {
@@ -801,7 +806,7 @@
 					{#each Array(10) as __, c}
 						<!-- data-r/data-c used by elementFromPoint drag placement -->
 						<div
-							class="cell {board.cells[r][c] ? 'filled' : ''} {selectedPlacedSid && board.cells[r][c]?.stickIds?.includes(selectedPlacedSid) ? 'sel' : ''}"
+							class="cell {board.cells[r][c] ? 'filled' : ''}"
 							data-r={r}
 							data-c={c}
 							on:click={() => handleCellClick(r, c)}
@@ -935,10 +940,16 @@
 				<div class="bankActions">
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn" disabled={!selectedPlacedSid && !selectedSid} on:click={() => {
-						if (selectedPlacedSid) rotateSelectedPlaced();
-						else if (selectedSid) toggleStickOrientation(selectedSid);
-					}} title="Rotate selected stick">↻</button>
+					<button class="iconBtn" disabled={!selectedSid} on:click={() => {
+						if (selectedSid) toggleStickOrientation(selectedSid);
+					}} title="Rotate selected stick orientation">
+						{#if selectedSid}
+							{@const selectedStickOrientation = sticks.find((s) => s.sid === selectedSid)?.orientation}
+							{#if selectedStickOrientation === 'H'} ⟷ {:else} ↕ {/if}
+						{:else}
+							↻
+						{/if}
+					</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -979,30 +990,6 @@
 									<div class="tile">{ch}</div>
 								{/each}
 							</div>
-
-							<!-- per-stick rotate icon (shows direction, rotates orientation value) -->
-							<button
-								class="rotIcon"
-								disabled={s.placed}
-								on:click|stopPropagation={(e) => {
-									e.preventDefault();
-									e.stopPropagation();
-									if (!s.placed) {
-										toggleStickOrientation(s.sid);
-									}
-								}}
-								on:mousedown|stopPropagation={(e) => {
-									e.preventDefault();
-									e.stopPropagation();
-								}}
-								aria-label="Rotate stick orientation"
-								title="Click to change orientation (H ↔ V)"
-							>
-								<span class="rotIconBg">↻</span>
-								<span class="rotIconFg">
-									{#if s.orientation === 'H'} ⟷ {:else} ↕ {/if}
-								</span>
-							</button>
 						</div>
 					{/each}
 				</div>
@@ -1305,10 +1292,7 @@
 		background: rgba(255,255,255,0.05);
 	}
 
-	.cell.sel {
-		outline: 2px solid rgba(132, 160, 255, 0.75);
-		outline-offset: -2px;
-	}
+	/* Removed .cell.sel - no blue stroke around settled sticks */
 
 	.letter {
 		font-weight: 800;
@@ -1329,14 +1313,14 @@
 	}
 
 	.cell.shadowValid {
-		outline: 2px solid rgba(132, 255, 160, 0.8);
-		outline-offset: -2px;
+		outline: 1px solid rgba(132, 255, 160, 0.8);
+		outline-offset: -1px;
 		background: rgba(132, 255, 160, 0.15);
 	}
 
 	.cell.shadowInvalid {
-		outline: 2px dashed rgba(255, 132, 132, 0.8);
-		outline-offset: -2px;
+		outline: 1px dashed rgba(255, 132, 132, 0.8);
+		outline-offset: -1px;
 		background: rgba(255, 132, 132, 0.15);
 	}
 
@@ -1353,9 +1337,12 @@
 	.cheat {
 		position: fixed;
 		inset: 0;
-		display: grid;
-		place-items: center;
-		padding: 20px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 20px 20px 20px 20px;
+		padding-top: 20px;
+		justify-content: flex-start;
 		z-index: 3000;
 		background: rgba(0,0,0,0.5);
 		backdrop-filter: blur(4px);
@@ -1477,10 +1464,10 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px 8px 10px;
+		padding: 0 10px 6px 10px; /* reduced bottom padding */
 		display: flex;
 		flex-direction: column;
-		min-height: 160px; /* ensure both rows visible */
+		min-height: 160px; /* ensure three rows visible */
 		max-height: 180px; /* allow some growth if needed */
 	}
 
@@ -1512,10 +1499,10 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 8px;
+		padding: 6px; /* reduced padding */
 		flex: 1;
-		min-height: 140px; /* ensure both rows visible */
-		max-height: 160px;
+		min-height: 150px; /* ensure three rows visible */
+		max-height: 170px;
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1539,14 +1526,14 @@
 		background: rgba(255,255,255,0.4);
 	}
 
-	/* 2-row pack, scroll together */
+	/* 3-row pack, scroll together */
 	.bankGrid {
 		display: grid;
 		grid-auto-flow: column;
-		grid-template-rows: repeat(2, 1fr); /* equal height rows */
-		gap: 8px;
+		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
+		gap: 6px; /* reduced gap */
 		align-content: start;
-		min-height: 120px; /* ensure both rows have space */
+		min-height: 150px; /* ensure three rows have space */
 	}
 
 	.stick {
@@ -1556,7 +1543,7 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 6px 6px;
+		padding: 4px 6px; /* reduced top/bottom padding */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: none; /* allows pointer-based drag */
