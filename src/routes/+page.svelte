@@ -33,11 +33,13 @@
 	let dragX = 0;
 	let dragY = 0;
 	let dragOverCell: { r: number; c: number } | null = null;
+	let dragPlacementValid: boolean = false; // for shadow preview
 	
 	// Board drag state (placed stick/cluster -> new position)
 	let draggingPlacedSid: string | null = null;
 	let dragStartCell: { r: number; c: number } | null = null;
 	let dragHoldTimer: ReturnType<typeof setTimeout> | null = null;
+	let dragPlacementValidCluster: boolean = false; // for cluster drag shadow
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
@@ -62,7 +64,7 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate and lock board size once - match iPhone 17 Pro on desktop
+		// Calculate and lock board size once - ensure it fits without clipping
 		const calculateBoardSize = () => {
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
@@ -70,16 +72,21 @@
 			const isDesktop = vw > 768;
 			if (isDesktop) {
 				// iPhone 17 Pro dimensions: 393x852 (portrait)
-				// Scale to fit but maintain aspect ratio
+				// Scale to fit but maintain aspect ratio, leave more room for headers/bank
 				const targetWidth = 393;
 				const targetHeight = 852;
-				const scale = Math.min((vw - 40) / targetWidth, (vh - 200) / targetHeight);
+				// Reserve space: ~200px for headers/clue bar, ~250px for morpheme bank
+				const availableHeight = vh - 450;
+				const availableWidth = vw - 60; // padding + margins
+				const scale = Math.min(availableWidth / targetWidth, availableHeight / targetHeight);
 				const scaledWidth = targetWidth * scale;
-				boardSize = `${Math.max(350, Math.min(600, scaledWidth))}px`;
+				boardSize = `${Math.max(300, Math.min(500, scaledWidth))}px`;
 			} else {
-				// Mobile: use viewport
-				const baseSize = Math.min(vw - 40, vh - 420);
-				boardSize = `${Math.max(200, Math.min(500, baseSize))}px`;
+				// Mobile: use viewport, reserve space for headers (~180px) and bank (~220px)
+				const availableHeight = vh - 400;
+				const availableWidth = vw - 40; // 20px padding each side
+				const baseSize = Math.min(availableWidth, availableHeight);
+				boardSize = `${Math.max(200, Math.min(450, baseSize))}px`;
 			}
 		};
 		calculateBoardSize();
@@ -346,7 +353,7 @@
 			dragHoldTimer = null;
 		}
 		
-		if (draggingPlacedSid && dragOverCell && dragStartCell) {
+		if (draggingPlacedSid && dragOverCell && dragStartCell && dragPlacementValidCluster) {
 			// Move the stick/cluster
 			const placed = board.placed[draggingPlacedSid];
 			if (placed) {
@@ -367,10 +374,12 @@
 				}
 			}
 		}
+		// If placement was invalid, stick/cluster stays in original position
 		
 		draggingPlacedSid = null;
 		dragStartCell = null;
 		dragOverCell = null;
+		dragPlacementValidCluster = false;
 		e.preventDefault();
 	}
 	
@@ -379,6 +388,7 @@
 		if (!cell) return;
 		
 		// Get all sticks in the cluster (connected via this intersection)
+		// Use BFS to find all connected cells, then get ALL sticks that pass through any of those cells
 		const clusterSticks = new Set<string>();
 		const visited = new Set<string>();
 		const queue: [number, number][] = [[startR, startC]];
@@ -393,11 +403,12 @@
 			const cell = board.cells[r][c];
 			if (!cell) continue;
 			
+			// Add all sticks that pass through this cell
 			for (const sid of cell.stickIds) {
 				clusterSticks.add(sid);
 			}
 			
-			// Add neighbors
+			// Add neighbors (adjacent cells in the same cluster)
 			const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
 			for (const [dr2, dc2] of dirs) {
 				const rr = r + dr2;
@@ -408,9 +419,39 @@
 			}
 		}
 		
+		// Now ensure we have ALL cells of each stick in the cluster
+		// For each stick, add all its cells to visited set and expand cluster
+		const allClusterCells = new Set<string>();
+		for (const sid of clusterSticks) {
+			const placed = board.placed[sid];
+			if (!placed) continue;
+			
+			const stickDr = placed.orientation === 'V' ? 1 : 0;
+			const stickDc = placed.orientation === 'H' ? 1 : 0;
+			
+			// Add all cells of this stick
+			for (let i = 0; i < placed.text.length; i++) {
+				const r = placed.row + stickDr * i;
+				const c = placed.col + stickDc * i;
+				allClusterCells.add(`${r},${c}`);
+			}
+		}
+		
+		// Expand cluster to include all connected cells
+		const finalClusterSticks = new Set<string>(clusterSticks);
+		for (const cellKey of allClusterCells) {
+			const [r, c] = cellKey.split(',').map(Number);
+			const cell = board.cells[r]?.[c];
+			if (cell) {
+				for (const sid of cell.stickIds) {
+					finalClusterSticks.add(sid);
+				}
+			}
+		}
+		
 		// Move all sticks in cluster
 		pushHistory();
-		for (const sid of clusterSticks) {
+		for (const sid of finalClusterSticks) {
 			const placed = board.placed[sid];
 			if (placed) {
 				const newRow = placed.row + dr;
@@ -521,14 +562,24 @@
 			const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
 			if (!el) {
 				dragOverCell = null;
+				dragPlacementValid = false;
 				return;
 			}
 			const rr = el.getAttribute('data-r');
 			const cc = el.getAttribute('data-c');
 			if (rr !== null && cc !== null) {
 				dragOverCell = { r: Number(rr), c: Number(cc) };
+				// Check if placement would be valid
+				const stick = sticks.find((s) => s.sid === draggingSid);
+				if (stick && !stick.placed) {
+					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c, bag.constraints.max_intersections_per_wordpair);
+					dragPlacementValid = ok.ok;
+				} else {
+					dragPlacementValid = false;
+				}
 			} else {
 				dragOverCell = null;
+				dragPlacementValid = false;
 			}
 		} else if (draggingPlacedSid) {
 			dragX = e.clientX;
@@ -538,14 +589,79 @@
 			const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
 			if (!el) {
 				dragOverCell = null;
+				dragPlacementValidCluster = false;
 				return;
 			}
 			const rr = el.getAttribute('data-r');
 			const cc = el.getAttribute('data-c');
-			if (rr !== null && cc !== null) {
+			if (rr !== null && cc !== null && dragStartCell) {
 				dragOverCell = { r: Number(rr), c: Number(cc) };
+				// Check if cluster move would be valid
+				const placed = board.placed[draggingPlacedSid];
+				if (placed) {
+					const dr = dragOverCell.r - dragStartCell.r;
+					const dc = dragOverCell.c - dragStartCell.c;
+					const newRow = placed.row + dr;
+					const newCol = placed.col + dc;
+					
+					// For cluster, check if ALL sticks can be moved to new position
+					const startCell = board.cells[dragStartCell.r]?.[dragStartCell.c];
+					if (startCell && startCell.stickIds.length > 1) {
+						// Check each stick in cluster
+						const clusterSticks = new Set<string>();
+						const visited = new Set<string>();
+						const queue: [number, number][] = [[dragStartCell.r, dragStartCell.c]];
+						
+						while (queue.length > 0) {
+							const [r, c] = queue.shift()!;
+							const key = `${r},${c}`;
+							if (visited.has(key)) continue;
+							visited.add(key);
+							
+							const cell = board.cells[r][c];
+							if (!cell) continue;
+							
+							for (const sid of cell.stickIds) {
+								clusterSticks.add(sid);
+							}
+							
+							const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+							for (const [dr2, dc2] of dirs) {
+								const rr = r + dr2;
+								const cc = c + dc2;
+								if (rr >= 0 && rr < board.rows && cc >= 0 && cc < board.cols && board.cells[rr][cc]) {
+									queue.push([rr, cc]);
+								}
+							}
+						}
+						
+						// Check if all sticks can move
+						let allValid = true;
+						for (const sid of clusterSticks) {
+							const p = board.placed[sid];
+							if (!p) continue;
+							const nr = p.row + dr;
+							const nc = p.col + dc;
+							const endR = nr + (p.orientation === 'V' ? p.text.length - 1 : 0);
+							const endC = nc + (p.orientation === 'H' ? p.text.length - 1 : 0);
+							if (nr < 0 || nc < 0 || endR >= board.rows || endC >= board.cols) {
+								allValid = false;
+								break;
+							}
+						}
+						dragPlacementValidCluster = allValid;
+					} else {
+						// Single stick
+						const endR = newRow + (placed.orientation === 'V' ? placed.text.length - 1 : 0);
+						const endC = newCol + (placed.orientation === 'H' ? placed.text.length - 1 : 0);
+						dragPlacementValidCluster = newRow >= 0 && newCol >= 0 && endR < board.rows && endC < board.cols;
+					}
+				} else {
+					dragPlacementValidCluster = false;
+				}
 			} else {
 				dragOverCell = null;
+				dragPlacementValidCluster = false;
 			}
 		}
 	}
@@ -566,7 +682,7 @@
 			const sid = draggingSid;
 			draggingSid = null;
 
-			if (dragOverCell) {
+			if (dragOverCell && dragPlacementValid) {
 				const stick = sticks.find((s) => s.sid === sid);
 				if (stick && !stick.placed) {
 					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c, bag.constraints.max_intersections_per_wordpair);
@@ -578,8 +694,10 @@
 					}
 				}
 			}
+			// If placement was invalid, stick stays in bank (already there)
 
 			dragOverCell = null;
+			dragPlacementValid = false;
 		}
 		
 		dragStartPos = null;
@@ -618,6 +736,7 @@
 			draggingPlacedSid = null;
 			dragStartCell = null;
 			dragOverCell = null;
+			dragPlacementValidCluster = false;
 		}
 	}}
 	on:pointermove={bankPointerMove}
@@ -632,6 +751,7 @@
 			draggingPlacedSid = null;
 			dragStartCell = null;
 			dragOverCell = null;
+			dragPlacementValidCluster = false;
 		}
 	}}
 />
@@ -708,6 +828,52 @@
 						</div>
 					{/each}
 				{/each}
+
+				<!-- Shadow preview for dragging stick from bank -->
+				{#if draggingSid && dragOverCell}
+					{@const draggedStick = sticks.find((s) => s.sid === draggingSid)}
+					{#if draggedStick}
+						{#each Array(draggedStick.text.length) as _, i}
+							{@const dr = draggedStick.orientation === 'V' ? 1 : 0}
+							{@const dc = draggedStick.orientation === 'H' ? 1 : 0}
+							{@const shadowR = dragOverCell.r + dr * i}
+							{@const shadowC = dragOverCell.c + dc * i}
+							{#if shadowR >= 0 && shadowR < 10 && shadowC >= 0 && shadowC < 10}
+								<div 
+									class="cell shadow {dragPlacementValid ? 'shadowValid' : 'shadowInvalid'}"
+									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+								>
+									<span class="letter shadowLetter">{draggedStick.text[i]}</span>
+								</div>
+							{/if}
+						{/each}
+					{/if}
+				{/if}
+
+				<!-- Shadow preview for dragging placed stick/cluster -->
+				{#if draggingPlacedSid && dragOverCell && dragStartCell}
+					{@const placed = board.placed[draggingPlacedSid]}
+					{#if placed}
+						{@const dr = dragOverCell.r - dragStartCell.r}
+						{@const dc = dragOverCell.c - dragStartCell.c}
+						{@const newRow = placed.row + dr}
+						{@const newCol = placed.col + dc}
+						{#each Array(placed.text.length) as _, i}
+							{@const stickDr = placed.orientation === 'V' ? 1 : 0}
+							{@const stickDc = placed.orientation === 'H' ? 1 : 0}
+							{@const shadowR = newRow + stickDr * i}
+							{@const shadowC = newCol + stickDc * i}
+							{#if shadowR >= 0 && shadowR < 10 && shadowC >= 0 && shadowC < 10}
+								<div 
+									class="cell shadow {dragPlacementValidCluster ? 'shadowValid' : 'shadowInvalid'}"
+									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+								>
+									<span class="letter shadowLetter">{placed.text[i]}</span>
+								</div>
+							{/if}
+						{/each}
+					{/if}
+				{/if}
 
 				{#if showCheat}
 					<div class="cheat" on:click|self={(e) => {
@@ -1105,7 +1271,7 @@
 		grid-template-rows: repeat(10, 1fr);
 		gap: 0; /* no padding between cells */
 		border-radius: 16px;
-		overflow: hidden;
+		overflow: hidden; /* clip shadows that go outside */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1127,6 +1293,8 @@
 		touch-action: manipulation;
 		cursor: pointer; /* show it's clickable */
 		aspect-ratio: 1 / 1; /* ensure square tiles */
+		position: relative;
+		z-index: 1; /* Base z-index for regular cells */
 	}
 
 	/* remove outer extra lines look */
@@ -1148,6 +1316,34 @@
 		letter-spacing: 0.8px;
 	}
 
+	/* Shadow preview for drag placement - rendered as grid children that overlay */
+	.cell.shadow {
+		position: relative;
+		z-index: 50; /* Higher than regular cells to overlay */
+		pointer-events: none;
+		opacity: 0.85;
+		margin: 0;
+		border-right: 1px solid rgba(255,255,255,0.06);
+		border-bottom: 1px solid rgba(255,255,255,0.06);
+		/* Shadows are rendered after regular cells, so they overlay with z-index */
+	}
+
+	.cell.shadowValid {
+		outline: 2px solid rgba(132, 255, 160, 0.8);
+		outline-offset: -2px;
+		background: rgba(132, 255, 160, 0.15);
+	}
+
+	.cell.shadowInvalid {
+		outline: 2px dashed rgba(255, 132, 132, 0.8);
+		outline-offset: -2px;
+		background: rgba(255, 132, 132, 0.15);
+	}
+
+	.shadowLetter {
+		color: rgba(233, 236, 255, 0.9);
+	}
+
 	.bankActions .iconBtn {
 		width: 32px;
 		padding: 5px 0;
@@ -1167,7 +1363,8 @@
 
 	.cheatCard {
 		width: min(92%, 340px);
-		max-height: 85vh;
+		max-height: calc(100vh - 280px); /* Leave room for headers and morpheme bank */
+		max-height: calc(100dvh - 280px); /* Use dynamic viewport height on mobile */
 		border-radius: 16px;
 		border: 1px solid rgba(255,255,255,0.14);
 		background: rgba(10, 14, 30, 0.98);
@@ -1219,7 +1416,9 @@
 		flex: 1;
 		padding-right: 4px;
 		-webkit-overflow-scrolling: touch;
-		max-height: calc(85vh - 100px);
+		max-height: calc(100vh - 350px); /* Constrain to not extend beyond morpheme scroller */
+		max-height: calc(100dvh - 350px); /* Use dynamic viewport height on mobile */
+		min-height: 200px;
 	}
 
 	.cheatContent::-webkit-scrollbar {

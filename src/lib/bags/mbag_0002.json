@@ -53,13 +53,7 @@
     { "sid": "s1_07", "text": "O" },
     { "sid": "s1_08", "text": "I" },
     { "sid": "s1_09", "text": "L" },
-    { "sid": "s1_10", "text": "D" },
-    { "sid": "s1_11", "text": "P" },
-    { "sid": "s1_12", "text": "C" },
-    { "sid": "s1_13", "text": "U" },
-    { "sid": "s1_14", "text": "H" },
-    { "sid": "s1_15", "text": "Y" },
-    { "sid": "s1_16", "text": "X" }
+    { "sid": "wild", "text": "*", "type": "wildcard" }
   ],
   "bonus": {
     "target_words": ["VAULT", "ALARM", "SCROL"],
