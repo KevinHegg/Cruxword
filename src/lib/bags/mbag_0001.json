@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "id": "mbag_0001",
+    "title": "The Locked Room",
+    "category": "Detective",
+    "mystery_question": "What was the murder weapon?",
+    "choices": ["Candlestick", "Rope", "Knife", "Revolver", "Wrench", "Poison", "Fireplace poker", "Ice pick", "Lead pipe", "Trophy"],
+    "answer_index": 2
+  },
+  "constraints": {
+    "grid": { "rows": 10, "cols": 10 },
+    "min_word_len": 3,
+    "submit_requires_single_cluster": true,
+    "max_intersections_per_wordpair": 1
+  },
+  "sticks": [
+    { "sid": "s5_01", "text": "KNIFE" },
+    { "sid": "s5_02", "text": "ALIBI" },
+    { "sid": "s5_03", "text": "BLOOD" },
+    { "sid": "s5_04", "text": "PROOF" },
+    { "sid": "s5_05", "text": "MOTIV" },
+
+    { "sid": "s4_01", "text": "CLUE" },
+    { "sid": "s4_02", "text": "CASE" },
+    { "sid": "s4_03", "text": "SEEN" },
+    { "sid": "s4_04", "text": "HUSH" },
+    { "sid": "s4_05", "text": "DOOR" },
+    { "sid": "s4_06", "text": "COLD" },
+
+    { "sid": "s3_01", "text": "LIE" },
+    { "sid": "s3_02", "text": "KEY" },
+    { "sid": "s3_03", "text": "EYE" },
+    { "sid": "s3_04", "text": "GUN" },
+    { "sid": "s3_05", "text": "HAT" },
+    { "sid": "s3_06", "text": "INK" },
+    { "sid": "s3_07", "text": "LED" },
+
+    { "sid": "s2_01", "text": "ED" },
+    { "sid": "s2_02", "text": "ER" },
+    { "sid": "s2_03", "text": "RE" },
+    { "sid": "s2_04", "text": "UN" },
+    { "sid": "s2_05", "text": "IN" },
+    { "sid": "s2_06", "text": "ON" },
+    { "sid": "s2_07", "text": "AT" },
+    { "sid": "s2_08", "text": "UP" },
+
+    { "sid": "s1_01", "text": "S" },
+    { "sid": "s1_02", "text": "E" },
+    { "sid": "s1_03", "text": "R" },
+    { "sid": "s1_04", "text": "A" },
+    { "sid": "s1_05", "text": "T" },
+    { "sid": "s1_06", "text": "N" },
+    { "sid": "s1_07", "text": "O" },
+    { "sid": "s1_08", "text": "I" },
+    { "sid": "s1_09", "text": "L" },
+    { "sid": "s1_10", "text": "D" },
+    { "sid": "s1_11", "text": "P" },
+    { "sid": "s1_12", "text": "C" },
+    { "sid": "s1_13", "text": "U" },
+    { "sid": "s1_14", "text": "H" },
+    { "sid": "s1_15", "text": "Y" },
+    { "sid": "s1_16", "text": "X" }
+  ],
+  "bonus": {
+    "target_words": ["KNIFE", "ALIBI", "PROOF"],
+    "target_morphemes": ["RE", "UN", "ED"],
+    "red_herrings": ["GUN", "ROPE", "POISON"]
+  }
+}

@@ -1,653 +1,784 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { pickRandomBag } from '$lib/bags';
+	import { bagToSticks, validateBagShape } from '$lib/game/bag';
+	import { canPlaceStick, createEmptyBoard, moveStick, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
+	import { validateAndScore } from '$lib/game/scoring';
+	import type { BoardState, MorphemeBag, Stick } from '$lib/game/types';
 
-	type Dir = 'H' | 'V';
+	let bag: MorphemeBag = pickRandomBag();
+	let bagIssues: string[] = [];
+	let sticks: Stick[] = [];
+	let board: BoardState = createEmptyBoard(10, 10);
 
-	type Slot = {
-		id: string;
-		text: string;
-		dir: Dir;
-		used: boolean; // placed on board?
-		placed: boolean;
-		x: number;
-		y: number;
-		illegal: boolean; // overlaps > 1, conflicts, out of bounds
-		overlaps: number;
-	};
+	let selectedSid: string | null = null;
+	let showCheat = true;
+	let showClue = true;
 
-	const W = 10;
-	const H = 10;
+	// Simple history for undo
+	let history: BoardState[] = [];
 
-	// Shows you if you’re seeing the latest deploy on your phone.
-	const BUILD = new Date().toISOString();
+	// Pointer/drag state (bank -> board)
+	let draggingSid: string | null = null;
+	let dragX = 0;
+	let dragY = 0;
+	let dragOverCell: { r: number; c: number } | null = null;
 
-	// Sample bag (edit later / load JSON)
-	const BAG: string[] = [
-		'TRACE',
-		'CLUES',
-		'SHARE',
-		'PRUNE',
-		'CRUX',
-		'WORD',
-		'LOGS',
-		'ARC',
-		'OVER',
-		'UNDER',
-		'MICRO',
-		'NESS',
-		'BIO',
-		'ED',
-		'ING',
-		'RE',
-		'UN',
-		'ABLE',
-		'ION',
-		'S',
-		'S',
-		'MENT',
-		'ANTI',
-		'POST',
-		'PRE',
-		'SUB',
-		'INTER',
-		'TRANS',
-		'PRO',
-		'NEUR'
-	].map((s) => s.toUpperCase());
+	// Board selection
+	let selectedPlacedSid: string | null = null;
 
-	function makeSlots(): Slot[] {
-		return BAG.map((text, i) => ({
-			id: `slot_${i}_${text}`,
-			text,
-			dir: 'H',
-			used: false,
-			placed: false,
-			x: 0,
-			y: 0,
-			illegal: false,
-			overlaps: 0
-		}));
-	}
+	// UI computed
+	$: filledCells = countFilled(board);
+	$: densityPct = Math.round((filledCells / 100) * 100);
+	$: remainingCount = sticks.filter((s) => !s.placed).length;
 
-	let slots: Slot[] = makeSlots();
-	let selectedId: string | null = null;
+	$: selectedStick = selectedSid ? sticks.find((s) => s.sid === selectedSid) ?? null : null;
 
-	// Undo history
-	let history: Slot[][] = [];
-	function pushHistory() {
-		history.push(structuredClone(slots));
-		if (history.length > 60) history.shift();
-	}
-	function undo() {
-		const prev = history.pop();
-		if (!prev) return;
-		slots = prev;
-		if (selectedId && !slots.some((s) => s.id === selectedId)) selectedId = null;
-		recompute();
-	}
-	function reset() {
-		history = [];
-		selectedId = null;
-		slots = makeSlots();
-		recompute();
-	}
-
-	// Board derived from placed slots
-	type Cell = { letter: string | null; owners: string[] };
-	let board: Cell[][] = Array.from({ length: H }, () =>
-		Array.from({ length: W }, () => ({ letter: null, owners: [] }))
-	);
-
-	function inBounds(x: number, y: number) {
-		return x >= 0 && x < W && y >= 0 && y < H;
-	}
-
-	function tilesFor(s: Slot) {
-		const chars = s.text.split('');
-		return chars.map((ch, i) => ({
-			x: s.dir === 'H' ? s.x + i : s.x,
-			y: s.dir === 'V' ? s.y + i : s.y,
-			ch
-		}));
-	}
-
-	function clearBoard() {
-		board = Array.from({ length: H }, () =>
-			Array.from({ length: W }, () => ({ letter: null, owners: [] }))
-		);
-	}
-
-	function recompute() {
-		clearBoard();
-
-		// build board owners + letters
-		for (const s of slots) {
-			if (!s.placed) continue;
-			for (const t of tilesFor(s)) {
-				if (!inBounds(t.x, t.y)) continue;
-				const c = board[t.y][t.x];
-				if (c.letter === null) c.letter = t.ch;
-				c.owners.push(s.id);
-			}
-		}
-
-		// legality checks
-		for (const s of slots) {
-			if (!s.placed) {
-				s.illegal = false;
-				s.overlaps = 0;
-				continue;
-			}
-
-			let out = false;
-			let conflicts = 0;
-			let overlaps = 0;
-
-			for (const t of tilesFor(s)) {
-				if (!inBounds(t.x, t.y)) {
-					out = true;
-					continue;
-				}
-				const c = board[t.y][t.x];
-				if (c.letter !== null && c.letter !== t.ch) conflicts++;
-				const otherOwners = c.owners.filter((id) => id !== s.id);
-				if (otherOwners.length > 0) overlaps++;
-			}
-
-			s.overlaps = overlaps;
-
-			// Your core rule: overlap/intersection at ONLY ONE tile
-			const overlapRuleViolated = overlaps > 1;
-
-			s.illegal = out || conflicts > 0 || overlapRuleViolated;
-		}
-	}
-
-	recompute();
-
-	$: tilesUsed = board.flat().filter((c) => c.letter).length;
-	$: density = Math.round((tilesUsed / 100) * 100);
-	$: bagCount = slots.length;
-
-	function selectSlot(id: string) {
-		selectedId = id;
-	}
-
-	function rotateSlot(id: string) {
-		const s = slots.find((x) => x.id === id);
-		if (!s) return;
-		pushHistory();
-		s.dir = s.dir === 'H' ? 'V' : 'H';
-		recompute();
-	}
-
-	function placeSelectedAt(x: number, y: number) {
-		if (!selectedId) return;
-		const s = slots.find((z) => z.id === selectedId);
-		if (!s) return;
-		pushHistory();
-		s.placed = true;
-		s.used = true;
-		s.x = x;
-		s.y = y;
-		recompute();
-	}
-
-	function sendBackToSlot(id: string) {
-		const s = slots.find((z) => z.id === id);
-		if (!s) return;
-		pushHistory();
-		s.placed = false;
-		s.used = false;
-		s.x = 0;
-		s.y = 0;
-		s.illegal = false;
-		s.overlaps = 0;
-		selectedId = id;
-		recompute();
-	}
-
-	function topOwnerAt(x: number, y: number): string | null {
-		const c = board[y][x];
-		if (!c.owners.length) return null;
-		// most recently placed approx = last in slots list
-		for (let i = slots.length - 1; i >= 0; i--) {
-			if (c.owners.includes(slots[i].id)) return slots[i].id;
-		}
-		return c.owners[0] ?? null;
-	}
-
-	// ---- iOS: hard-disable double-tap zoom, and implement OUR double-tap ----
-	let lastTapAt = 0;
-	let lastTapOwner: string | null = null;
-
-	function handleBoardTap(x: number, y: number) {
-		const owner = topOwnerAt(x, y);
-
-		// If user tapped a placed stick: select it; double-tap => send back
-		if (owner) {
-			const now = Date.now();
-			const isDouble = lastTapOwner === owner && now - lastTapAt < 300;
-
-			lastTapAt = now;
-			lastTapOwner = owner;
-
-			if (isDouble) {
-				sendBackToSlot(owner);
-				return;
-			}
-
-			selectedId = owner;
-			return;
-		}
-
-		// Empty cell: place selected
-		lastTapOwner = null;
-		lastTapAt = Date.now();
-		if (selectedId) placeSelectedAt(x, y);
-	}
-
+	// ---- lifecycle
 	onMount(() => {
-		// 1) Prevent Safari double-tap zoom globally.
-		// Needs passive:false or preventDefault won’t work.
-		let lastTouchEnd = 0;
-		const stopDoubleTapZoom = (e: TouchEvent) => {
-			const now = Date.now();
-			if (now - lastTouchEnd <= 300) e.preventDefault();
-			lastTouchEnd = now;
+		startNewGame();
+		// any first user action hides cheat sheet
+		const hide = () => {
+			if (showCheat) showCheat = false;
+			window.removeEventListener('pointerdown', hide, { capture: true } as any);
 		};
-
-		document.addEventListener('touchend', stopDoubleTapZoom, { passive: false });
-
-		// 2) Also prevent pinch zoom as much as possible (won’t block OS-level gestures)
-		const preventGesture = (e: Event) => e.preventDefault();
-		document.addEventListener('gesturestart', preventGesture as any, { passive: false });
-		document.addEventListener('gesturechange', preventGesture as any, { passive: false });
-		document.addEventListener('gestureend', preventGesture as any, { passive: false });
-
-		return () => {
-			document.removeEventListener('touchend', stopDoubleTapZoom as any);
-			document.removeEventListener('gesturestart', preventGesture as any);
-			document.removeEventListener('gesturechange', preventGesture as any);
-			document.removeEventListener('gestureend', preventGesture as any);
-		};
+		window.addEventListener('pointerdown', hide, { capture: true } as any);
 	});
 
-	function canSubmit() {
-		return slots.some((s) => s.placed) && slots.filter((s) => s.placed).every((s) => !s.illegal);
+	function startNewGame() {
+		bag = pickRandomBag();
+		bagIssues = validateBagShape(bag);
+		sticks = bagToSticks(bag);
+		board = createEmptyBoard(10, 10);
+		history = [];
+		selectedSid = null;
+		selectedPlacedSid = null;
+		showCheat = true;
+		showClue = true;
 	}
 
+	function countFilled(b: BoardState) {
+		let n = 0;
+		for (let r = 0; r < b.rows; r++) for (let c = 0; c < b.cols; c++) if (b.cells[r][c]) n++;
+		return n;
+	}
+
+	function pushHistory() {
+		// Keep it small
+		history = [structuredClone(board), ...history].slice(0, 20);
+	}
+
+	function undo() {
+		const prev = history[0];
+		if (!prev) return;
+		history = history.slice(1);
+		board = prev;
+		// update stick placed flags from board.placed
+		const placedSet = new Set(Object.keys(board.placed));
+		sticks = sticks.map((s) => ({ ...s, placed: placedSet.has(s.sid) }));
+		selectedPlacedSid = null;
+	}
+
+	// ---- bank interactions
+	function selectStick(sid: string) {
+		selectedPlacedSid = null;
+		selectedSid = sid;
+	}
+
+	function toggleStickOrientation(sid: string) {
+		sticks = sticks.map((s) => (s.sid === sid ? { ...s, orientation: rotateOrientation(s.orientation) } : s));
+	}
+
+	// ---- placing via tap
+	function tapPlace(r: number, c: number) {
+		if (!selectedSid) return;
+		const stick = sticks.find((s) => s.sid === selectedSid);
+		if (!stick || stick.placed) return;
+
+		const ok = canPlaceStick(board, stick, r, c);
+		if (!ok.ok) return;
+
+		pushHistory();
+		board = placeStick(board, stick, r, c);
+		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
+		selectedSid = null;
+	}
+
+	// ---- board stick selection + move/return
+	function tapCellSelect(r: number, c: number) {
+		const cell = board.cells[r][c];
+		if (!cell || cell.stickIds.length === 0) {
+			selectedPlacedSid = null;
+			return;
+		}
+		// Prefer last stick id (more recent overlaps)
+		selectedPlacedSid = cell.stickIds[cell.stickIds.length - 1];
+		selectedSid = null;
+	}
+
+	function returnSelectedPlaced() {
+		if (!selectedPlacedSid) return;
+		pushHistory();
+		board = removeStick(board, selectedPlacedSid);
+		sticks = sticks.map((s) => (s.sid === selectedPlacedSid ? { ...s, placed: false } : s));
+		selectedPlacedSid = null;
+	}
+
+	function rotateSelectedPlaced() {
+		if (!selectedPlacedSid) return;
+		const ps = board.placed[selectedPlacedSid];
+		if (!ps) return;
+
+		// remove then place rotated at same anchor if possible
+		const stickTemp: Stick = { sid: ps.sid, text: ps.text, orientation: ps.orientation, placed: true };
+		const rotated: Stick = { ...stickTemp, orientation: rotateOrientation(stickTemp.orientation) };
+
+		// remove
+		const removed = removeStick(board, ps.sid);
+		const ok = canPlaceStick(removed, rotated, ps.row, ps.col);
+		if (!ok.ok) return; // fail silently MVP
+
+		pushHistory();
+		const replaced = placeStick(removed, rotated, ps.row, ps.col);
+		board = replaced;
+
+		// keep bank orientation in sync for that stick
+		sticks = sticks.map((s) => (s.sid === ps.sid ? { ...s, orientation: rotated.orientation, placed: true } : s));
+	}
+
+	// ---- drag from bank to board (simple pointer-based)
+	function bankPointerDown(e: PointerEvent, sid: string) {
+		const s = sticks.find((x) => x.sid === sid);
+		if (!s || s.placed) return;
+
+		draggingSid = sid;
+		dragX = e.clientX;
+		dragY = e.clientY;
+		dragOverCell = null;
+
+		(e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+		e.preventDefault();
+	}
+
+	function bankPointerMove(e: PointerEvent) {
+		if (!draggingSid) return;
+		dragX = e.clientX;
+		dragY = e.clientY;
+
+		// find board cell under pointer
+		const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+		if (!el) {
+			dragOverCell = null;
+			return;
+		}
+		const rr = el.getAttribute('data-r');
+		const cc = el.getAttribute('data-c');
+		if (rr !== null && cc !== null) {
+			dragOverCell = { r: Number(rr), c: Number(cc) };
+		} else {
+			dragOverCell = null;
+		}
+
+		e.preventDefault();
+	}
+
+	function bankPointerUp(e: PointerEvent) {
+		if (!draggingSid) return;
+
+		const sid = draggingSid;
+		draggingSid = null;
+
+		if (dragOverCell) {
+			const stick = sticks.find((s) => s.sid === sid);
+			if (stick && !stick.placed) {
+				const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c);
+				if (ok.ok) {
+					pushHistory();
+					board = placeStick(board, stick, dragOverCell.r, dragOverCell.c);
+					sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
+					selectedSid = null;
+				}
+			}
+		}
+
+		dragOverCell = null;
+		e.preventDefault();
+	}
+
+	// ---- submit
+	let submitResult: { ok: boolean; issues: string[]; score: number; densityPct: number; wordCount: number } | null = null;
+
 	function submit() {
-		if (!canSubmit()) return;
-		alert('MVP Submit: next step is cluster validation + scoring.');
+		const res = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair);
+
+		submitResult = {
+			ok: res.ok,
+			issues: res.issues,
+			score: res.score,
+			densityPct: Math.round(res.density * 100),
+			wordCount: res.wordCount
+		};
+	}
+
+	function closeSubmitModal() {
+		submitResult = null;
 	}
 </script>
 
-<svelte:head>
-	<style>
-		html,
-		body {
-			height: 100%;
-			width: 100%;
-			margin: 0;
-			overflow: hidden; /* prevents the “right 1/3 cut off” + sideways scroll */
-			background: #070b14;
-		}
-		* {
-			box-sizing: border-box;
-			-webkit-tap-highlight-color: transparent;
-		}
-	</style>
-</svelte:head>
+<svelte:window
+	on:pointermove={bankPointerMove}
+	on:pointerup={bankPointerUp}
+/>
 
-<main class="app">
+<div class="screen" style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;">
 	<header class="top">
 		<div class="titleRow">
-			<div class="title">CRUXWORD</div>
-			<div class="bagPill">Bag {bagCount}</div>
+			<div class="title">
+				<div class="h1">Cruxword <span class="bagId">({bag.meta.id})</span></div>
+				<div class="tagline">Morpheme Rush, a daily workout for your brain.</div>
+			</div>
+
+			<button class="btn" on:click={startNewGame} aria-label="Reset">Reset</button>
 		</div>
 
 		<div class="statsRow">
-			<div class="pill">Tiles <b>{tilesUsed}/100</b></div>
-			<div class="pill">Density <b>{density}%</b></div>
+			<div class="stat">Tiles {filledCells}/100</div>
+			<div class="stat">Density {densityPct}%</div>
+			<div class="stat">Bag {remainingCount} left</div>
 
-			<div class="btnRow">
-				<button class="btn" on:click={undo} disabled={history.length === 0} aria-label="Undo" title="Undo">
-					↶
-				</button>
-				<button class="btn" on:click={reset} aria-label="Reset" title="Reset">
-					⟲
-				</button>
-				<button class="btn primary" on:click={submit} disabled={!canSubmit()} aria-label="Submit" title="Submit">
-					✓
-				</button>
+			<div class="spacer"></div>
+
+			<button class="iconBtn" on:click={undo} aria-label="Undo" title="Undo">↶</button>
+			<button class="btnPrimary" on:click={submit} aria-label="Submit">Submit</button>
+		</div>
+
+		<!-- clue bar (opens by default and overlays board until closed) -->
+		<div class="clueBar {showClue ? 'open' : 'closed'}" aria-live="polite">
+			<div class="clueText">
+				<span class="clueLabel">{bag.meta.category}:</span>
+				<span class="clueQ">{bag.meta.mystery_question}</span>
 			</div>
+			<button class="iconBtn" on:click={() => (showClue = !showClue)} aria-label="Toggle clue" title="Toggle clue">
+				{showClue ? '▾' : '▸'}
+			</button>
 		</div>
 	</header>
 
-	<section class="boardWrap">
-		<div class="board" aria-label="10x10 board">
-			{#each Array(H) as _, y}
-				{#each Array(W) as __, x}
-					<!-- Use BUTTON so taps reliably fire on iOS -->
-					<button
-						type="button"
-						class="cell {board[y][x].letter ? 'filled' : ''} {board[y][x].owners.length > 1 ? 'overlap' : ''}"
-						on:click={() => handleBoardTap(x, y)}
-						on:touchend|preventDefault={() => handleBoardTap(x, y)}
-						aria-label={`cell ${x + 1},${y + 1}`}
-					>
-						{#if board[y][x].letter}
-							<span class="cellLetter">{board[y][x].letter}</span>
-						{/if}
-					</button>
+	<main class="main">
+		<!-- Board wrapper ensures no horizontal cutoff on iPhone -->
+		<div class="boardWrap">
+			<div class="board" style="--rows: 10; --cols: 10;" aria-label="10 by 10 board">
+				{#each Array(10) as _, r}
+					{#each Array(10) as __, c}
+						<!-- data-r/data-c used by elementFromPoint drag placement -->
+						<div
+							class="cell {board.cells[r][c] ? 'filled' : ''} {selectedPlacedSid && board.cells[r][c]?.stickIds?.includes(selectedPlacedSid) ? 'sel' : ''}"
+							data-r={r}
+							data-c={c}
+							on:click={() => {
+								// If cell has letters, select placed stick; else place selected stick
+								if (board.cells[r][c]) tapCellSelect(r, c);
+								else tapPlace(r, c);
+							}}
+						>
+							{#if board.cells[r][c]}
+								<span class="letter">{board.cells[r][c]!.letter}</span>
+							{/if}
+						</div>
+					{/each}
 				{/each}
-			{/each}
-		</div>
-	</section>
 
-	<footer class="bagWrap">
-		<div class="bagHeader">
-			<div class="bagTitle">Morphemes</div>
-			<div class="buildTag">Build {BUILD.slice(11, 19)}</div>
+				{#if showCheat}
+					<div class="cheat">
+						<div class="cheatCard">
+							<div class="cheatTitle">Quickstart</div>
+							<ul class="cheatList">
+								<li><span class="hang">Tap</span> a morpheme stick to select it</li>
+								<li><span class="hang">Tap</span> a board cell to place</li>
+								<li><span class="hang">Hold</span> a stick in the bank to drag-drop onto the board</li>
+								<li><span class="hang">Tap</span> a placed tile to select its stick</li>
+								<li><span class="hang">↻</span> rotates a selected stick (90° only)</li>
+								<li><span class="hang">Submit</span> checks legality + scores density/words</li>
+							</ul>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- board selection toolbar -->
+			<div class="boardTools">
+				<button class="iconBtn" disabled={!selectedPlacedSid} on:click={returnSelectedPlaced} title="Return stick">⤺</button>
+				<button class="iconBtn" disabled={!selectedPlacedSid} on:click={rotateSelectedPlaced} title="Rotate selected stick">↻</button>
+				<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Toggle quickstart">?</button>
+			</div>
 		</div>
 
-		<!-- One-line, one-tile-tall holders -->
-		<div class="bagRow" aria-label="Morpheme bag">
-			{#each slots as s (s.id)}
-				<button
-					type="button"
-					class="slot {selectedId === s.id ? 'selected' : ''} {s.used ? 'used' : ''} {s.placed && s.illegal ? 'illegal' : ''}"
-					on:click={() => selectSlot(s.id)}
-					on:touchend|preventDefault={() => selectSlot(s.id)}
-					aria-label={`slot ${s.text}`}
-				>
-					<div class="tiles">
-						{#each s.text.split('') as ch}
-							<div class="t">{ch}</div>
+		<!-- Bank: 2-row horizontal scrolling -->
+		<section class="bank">
+			<div class="bankHeader">
+				<div class="bankLabel">Morphemes</div>
+			</div>
+
+			<div class="bankScroller" aria-label="Morpheme bank (scroll sideways)">
+				<div class="bankGrid">
+					{#each sticks as s (s.sid)}
+						<div
+							class="stick {s.placed ? 'ghost' : ''} {selectedSid === s.sid ? 'selected' : ''}"
+							on:click={() => !s.placed && selectStick(s.sid)}
+							on:pointerdown={(e) => bankPointerDown(e, s.sid)}
+						>
+							<div class="stickTiles">
+								{#each s.text.split('') as ch}
+									<div class="tile">{ch}</div>
+								{/each}
+							</div>
+
+							<!-- per-stick rotate icon -->
+							<button
+								class="rotIcon"
+								disabled={s.placed}
+								on:click|stopPropagation={() => toggleStickOrientation(s.sid)}
+								aria-label="Rotate stick"
+								title="Rotate (90°)"
+							>
+								{#if s.orientation === 'H'} ⟷ {:else} ↕ {/if}
+							</button>
+						</div>
+					{/each}
+				</div>
+			</div>
+		</section>
+	</main>
+
+	<!-- drag ghost -->
+	{#if draggingSid}
+		{#if sticks.find((s) => s.sid === draggingSid) as ds}
+			<div class="dragGhost" style="left:{dragX}px; top:{dragY}px;">
+				<div class="stickTiles">
+					{#each ds.text.split('') as ch}
+						<div class="tile">{ch}</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	{/if}
+
+	<!-- submit modal -->
+	{#if submitResult}
+		<div class="modalBackdrop" on:click={closeSubmitModal}>
+			<div class="modal" on:click|stopPropagation>
+				<div class="modalTitle">{submitResult.ok ? '✅ Valid Cruxword' : '❌ Not Submittable Yet'}</div>
+				<div class="modalStats">
+					<div>Score: <b>{submitResult.score}</b></div>
+					<div>Density: <b>{submitResult.densityPct}%</b></div>
+					<div>Words (≥3): <b>{submitResult.wordCount}</b></div>
+				</div>
+
+				{#if submitResult.issues.length}
+					<div class="issues">
+						{#each submitResult.issues as i}
+							<div class="issue">• {i}</div>
 						{/each}
 					</div>
+				{/if}
 
-					<!-- Rotate icon in the SAME ROW (right side) -->
-					<button
-						type="button"
-						class="rot"
-						aria-label="Rotate"
-						title="Rotate 90°"
-						disabled={selectedId !== s.id}
-						on:click|stopPropagation={() => rotateSlot(s.id)}
-						on:touchend|preventDefault|stopPropagation={() => rotateSlot(s.id)}
-					>
-						<span class="rotGlyph">⦿</span>
-						<span class="rotBar">{s.dir === 'H' ? '—' : '|'}</span>
-					</button>
-				</button>
+				<button class="btnPrimary" on:click={closeSubmitModal}>Close</button>
+			</div>
+		</div>
+	{/if}
+
+	{#if bagIssues.length}
+		<div class="bagWarn">
+			<div class="bagWarnTitle">Bag warnings (safe to ignore for MVP):</div>
+			{#each bagIssues as w}
+				<div class="bagWarnItem">• {w}</div>
 			{/each}
 		</div>
-	</footer>
-</main>
+	{/if}
+</div>
 
 <style>
-	:global(body) {
+	/* --- Mobile-first sizing: board must fit screen width without cutoff --- */
+	:global(html, body) {
+		margin: 0;
+		background: #070b18;
+		color: #e9ecff;
 		font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-		color: rgba(255, 255, 255, 0.92);
+		overscroll-behavior: none;
 	}
 
-	.app {
-		height: 100dvh;
-		width: 100vw;
-		padding: 12px;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		overflow: hidden;
+	.screen {
+		max-width: 520px;
+		margin: 0 auto;
+		touch-action: manipulation; /* helps prevent double-tap zoom */
 	}
 
-	/* Header */
 	.top {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
+		position: sticky;
+		top: 0;
+		background: linear-gradient(180deg, rgba(7, 11, 24, 0.98), rgba(7, 11, 24, 0.85));
+		backdrop-filter: blur(8px);
+		z-index: 20;
+		padding-bottom: 6px;
 	}
 
 	.titleRow {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: space-between;
+		gap: 10px;
 	}
 
-	.title {
-		font-weight: 900;
-		letter-spacing: 0.08em;
-		font-size: 22px;
+	.h1 {
+		font-size: 18px;
+		font-weight: 750;
+		letter-spacing: 0.2px;
+		line-height: 1.1;
 	}
 
-	.bagPill {
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.06);
-		border-radius: 999px;
-		padding: 10px 12px;
-		font-weight: 800;
-		opacity: 0.9;
+	.bagId {
+		opacity: 0.75;
+		font-weight: 600;
+	}
+
+	.tagline {
+		font-size: 12px;
+		opacity: 0.8;
+		margin-top: 2px;
 	}
 
 	.statsRow {
-		display: grid;
-		grid-template-columns: 1fr 1fr auto;
-		gap: 10px;
+		display: flex;
 		align-items: center;
+		gap: 10px;
+		margin-top: 6px;
+		flex-wrap: nowrap;
+		overflow: hidden;
 	}
 
-	.pill {
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
-		border-radius: 999px;
-		padding: 10px 12px;
-		font-size: 15px;
+	.stat {
+		font-size: 12px;
+		opacity: 0.9;
 		white-space: nowrap;
 	}
 
-	.btnRow {
-		display: flex;
-		gap: 8px;
+	.spacer { flex: 1; }
+
+	.btn, .btnPrimary, .iconBtn {
+		border: 1px solid rgba(255,255,255,0.15);
+		background: rgba(255,255,255,0.06);
+		color: #e9ecff;
+		border-radius: 10px;
+		padding: 8px 10px;
+		font-weight: 650;
+		font-size: 13px;
 	}
 
-	.btn {
-		height: 44px;
-		min-width: 44px;
-		padding: 0 12px;
-		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.06);
-		color: rgba(255, 255, 255, 0.92);
-		font-weight: 900;
-		touch-action: manipulation;
+	.btnPrimary {
+		background: rgba(132, 160, 255, 0.20);
+		border-color: rgba(132, 160, 255, 0.45);
 	}
 
-	.btn:disabled {
+	.iconBtn {
+		width: 38px;
+		display: grid;
+		place-items: center;
+		padding: 8px 0;
+	}
+
+	.iconBtn:disabled {
 		opacity: 0.35;
 	}
 
-	.btn.primary {
-		border-color: rgba(110, 231, 183, 0.35);
-		background: rgba(110, 231, 183, 0.12);
-	}
-
-	/* Board */
-	.boardWrap {
-		flex: 1 1 auto;
-		min-height: 0;
+	.clueBar {
+		margin-top: 6px;
+		border-radius: 12px;
+		border: 1px solid rgba(255,255,255,0.12);
+		background: rgba(255,255,255,0.05);
+		padding: 8px 10px;
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		gap: 10px;
+	}
+
+	.clueBar.closed .clueText {
+		display: none;
+	}
+
+	.clueText {
+		flex: 1;
+		font-size: 12px;
+		line-height: 1.2;
+	}
+
+	.clueLabel {
+		opacity: 0.85;
+		font-weight: 700;
+		margin-right: 6px;
+	}
+
+	.main {
+		padding: 10px 0 14px 0;
+	}
+
+	.boardWrap {
+		position: relative;
 	}
 
 	.board {
-		width: calc(100vw - 24px);
-		max-width: 520px;
-		aspect-ratio: 1 / 1;
+		position: relative;
+		width: 100%;
+		aspect-ratio: 1 / 1; /* square board */
 		display: grid;
 		grid-template-columns: repeat(10, 1fr);
 		grid-template-rows: repeat(10, 1fr);
-		gap: 2px; /* tighter = shorter board */
-		padding: 8px;
-		border-radius: 18px;
-		border: 1px solid rgba(255, 255, 255, 0.10);
+		gap: 0; /* no padding between cells to reduce height */
+		border-radius: 16px;
+		overflow: hidden;
+		border: 1px solid rgba(255,255,255,0.12);
 		background:
-			radial-gradient(1200px 600px at 50% 0%, rgba(99, 102, 241, 0.10), transparent 60%),
-			rgba(255, 255, 255, 0.02);
+			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
+			radial-gradient(circle at 70% 75%, rgba(200, 140, 255, 0.12), transparent 50%),
+			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 	}
 
+	/* subtle grid lines */
 	.cell {
-		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		background: rgba(0, 0, 0, 0.18);
 		display: grid;
 		place-items: center;
-		padding: 0; /* no internal padding */
-		margin: 0;
-		touch-action: manipulation;
-		-webkit-user-select: none;
+		border-right: 1px solid rgba(255,255,255,0.06);
+		border-bottom: 1px solid rgba(255,255,255,0.06);
 		user-select: none;
+		-webkit-user-select: none;
+		touch-action: manipulation;
 	}
+
+	/* remove outer extra lines look */
+	.cell:nth-child(10n) { border-right: none; }
+	.board > .cell:nth-last-child(-n + 10) { border-bottom: none; }
 
 	.cell.filled {
-		background: rgba(255, 255, 255, 0.08);
-		border-color: rgba(255, 255, 255, 0.14);
+		background: rgba(255,255,255,0.05);
 	}
 
-	.cell.overlap {
-		outline: 2px solid rgba(250, 204, 21, 0.50);
+	.cell.sel {
+		outline: 2px solid rgba(132, 160, 255, 0.75);
+		outline-offset: -2px;
 	}
 
-	.cellLetter {
-		font-weight: 900;
-		letter-spacing: 0.06em;
-		font-size: clamp(14px, 4.3vw, 20px);
+	.letter {
+		font-weight: 800;
+		font-size: clamp(10px, 2.2vw, 16px);
+		letter-spacing: 0.6px;
 	}
 
-	/* Bag */
-	.bagWrap {
-		flex: 0 0 auto;
+	.boardTools {
 		display: flex;
-		flex-direction: column;
+		justify-content: flex-end;
 		gap: 8px;
+		margin-top: 8px;
 	}
 
-	.bagHeader {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
+	.cheat {
+		position: absolute;
+		inset: 0;
+		display: grid;
+		place-items: center;
+		padding: 10px;
 	}
 
-	.bagTitle {
-		font-weight: 900;
-		font-size: 18px;
-		letter-spacing: 0.03em;
+	.cheatCard {
+		width: min(92%, 340px);
+		border-radius: 16px;
+		border: 1px solid rgba(255,255,255,0.14);
+		background: rgba(10, 14, 30, 0.92);
+		backdrop-filter: blur(10px);
+		padding: 12px 12px 10px 12px;
 	}
 
-	.buildTag {
+	.cheatTitle {
+		font-weight: 800;
+		margin-bottom: 8px;
+	}
+
+	.cheatList {
+		margin: 0;
+		padding-left: 0;
+		list-style: none;
 		font-size: 12px;
-		opacity: 0.55;
+		line-height: 1.35;
+		opacity: 0.92;
 	}
 
-	.bagRow {
+	.cheatList li {
+		display: grid;
+		grid-template-columns: 48px 1fr;
+		gap: 8px;
+		margin: 6px 0;
+	}
+
+	.hang {
+		font-weight: 800;
+		opacity: 0.95;
+	}
+
+	.bank {
+		margin-top: 10px;
+	}
+
+	.bankHeader {
 		display: flex;
-		gap: 10px;
-		overflow-x: auto;
-		overflow-y: hidden;
-		padding-bottom: env(safe-area-inset-bottom);
-		-webkit-overflow-scrolling: touch;
-		touch-action: pan-x;
-	}
-
-	/* One-tile-tall holder */
-	.slot {
-		flex: 0 0 auto;
-		display: inline-flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 10px;
-		padding: 10px 10px;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.10);
-		background: rgba(255, 255, 255, 0.06);
-		min-height: 52px;
-		touch-action: manipulation;
+		margin: 8px 0 6px 0;
 	}
 
-	.slot.selected {
-		outline: 2px solid rgba(96, 165, 250, 0.55);
-		background: rgba(96, 165, 250, 0.14);
+	.bankLabel {
+		font-weight: 800;
+		opacity: 0.95;
 	}
 
-	/* Shadow/ghost when used (empty slot but keep faint letters) */
-	.slot.used .t {
-		opacity: 0.22;
-	}
-
-	.slot.illegal {
-		outline: 2px solid rgba(248, 113, 113, 0.55);
-	}
-
-	.tiles {
-		display: inline-flex;
-		gap: 6px;
-	}
-
-	.t {
-		width: 34px;
-		height: 34px;
-		border-radius: 12px;
-		display: grid;
-		place-items: center;
-		border: 1px solid rgba(255, 255, 255, 0.10);
-		background: rgba(0, 0, 0, 0.18);
-		font-weight: 900;
-		letter-spacing: 0.06em;
-	}
-
-	/* Rotate icon in same row, right side */
-	.rot {
-		width: 44px;
-		height: 44px;
+	.bankScroller {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 		border-radius: 14px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(0, 0, 0, 0.18);
-		color: rgba(255, 255, 255, 0.9);
-		position: relative;
+		border: 1px solid rgba(255,255,255,0.12);
+		background: rgba(255,255,255,0.04);
+		padding: 8px;
+	}
+
+	/* 2-row pack, scroll together */
+	.bankGrid {
+		display: grid;
+		grid-auto-flow: column;
+		grid-template-rows: repeat(2, auto);
+		gap: 8px;
+		align-content: start;
+	}
+
+	.stick {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		border-radius: 12px;
+		border: 1px solid rgba(255,255,255,0.12);
+		background: rgba(255,255,255,0.06);
+		padding: 6px 6px;
+		user-select: none;
+		-webkit-user-select: none;
+		touch-action: none; /* allows pointer-based drag */
+	}
+
+	.stick.selected {
+		outline: 2px solid rgba(132, 160, 255, 0.8);
+		outline-offset: 0;
+	}
+
+	.stick.ghost {
+		opacity: 0.35;
+		filter: grayscale(0.35);
+	}
+
+	.stickTiles {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.tile {
+		width: 22px;
+		height: 22px; /* one-tile tall holders */
+		border-radius: 7px;
 		display: grid;
 		place-items: center;
-		touch-action: manipulation;
-	}
-
-	.rot:disabled {
-		opacity: 0.28;
-	}
-
-	.rotGlyph {
-		font-size: 18px;
-		line-height: 1;
-		opacity: 0.85;
-	}
-
-	.rotBar {
-		position: absolute;
 		font-weight: 900;
-		opacity: 0.9;
+		font-size: 13px;
+		background: rgba(255,255,255,0.08);
+		border: 1px solid rgba(255,255,255,0.10);
 	}
 
-	@media (max-width: 390px) {
-		.title {
-			font-size: 20px;
-		}
-		.t {
-			width: 32px;
-			height: 32px;
-			border-radius: 11px;
-		}
-		.slot {
-			min-height: 50px;
-		}
+	.rotIcon {
+		border-radius: 10px;
+		border: 1px solid rgba(255,255,255,0.12);
+		background: rgba(255,255,255,0.06);
+		color: #e9ecff;
+		font-weight: 900;
+		padding: 6px 8px;
+		font-size: 12px;
+	}
+
+	.rotIcon:disabled {
+		opacity: 0.3;
+	}
+
+	.dragGhost {
+		position: fixed;
+		transform: translate(-50%, -50%);
+		pointer-events: none;
+		z-index: 1000;
+		filter: drop-shadow(0 10px 20px rgba(0,0,0,0.4));
+	}
+
+	.modalBackdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0,0,0,0.55);
+		display: grid;
+		place-items: center;
+		z-index: 2000;
+		padding: 16px;
+	}
+
+	.modal {
+		width: min(92vw, 420px);
+		border-radius: 18px;
+		border: 1px solid rgba(255,255,255,0.14);
+		background: rgba(10, 14, 30, 0.96);
+		backdrop-filter: blur(12px);
+		padding: 14px;
+	}
+
+	.modalTitle {
+		font-weight: 900;
+		font-size: 16px;
+		margin-bottom: 8px;
+	}
+
+	.modalStats {
+		display: flex;
+		gap: 12px;
+		flex-wrap: wrap;
+		font-size: 13px;
+		opacity: 0.95;
+		margin-bottom: 10px;
+	}
+
+	.issues {
+		border-radius: 14px;
+		border: 1px solid rgba(255,255,255,0.10);
+		background: rgba(255,255,255,0.05);
+		padding: 10px;
+		margin-bottom: 10px;
+	}
+
+	.issue {
+		font-size: 12px;
+		line-height: 1.35;
+		opacity: 0.92;
+		margin: 4px 0;
+	}
+
+	.bagWarn {
+		margin-top: 10px;
+		font-size: 12px;
+		opacity: 0.85;
+		border: 1px dashed rgba(255,255,255,0.18);
+		border-radius: 14px;
+		padding: 10px;
+	}
+
+	.bagWarnTitle {
+		font-weight: 800;
+		margin-bottom: 6px;
 	}
 </style>

@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "id": "mbag_0002",
+    "title": "The Museum Heist",
+    "category": "Mystery",
+    "mystery_question": "What was stolen?",
+    "choices": ["Ruby idol", "Golden mask", "Rare coin", "Ancient scroll", "Diamond", "Bronze statue", "Emerald ring", "Pearl necklace", "Painted vase", "Silver dagger"],
+    "answer_index": 3
+  },
+  "constraints": {
+    "grid": { "rows": 10, "cols": 10 },
+    "min_word_len": 3,
+    "submit_requires_single_cluster": true,
+    "max_intersections_per_wordpair": 1
+  },
+  "sticks": [
+    { "sid": "s5_01", "text": "SCROL" },
+    { "sid": "s5_02", "text": "STEAL" },
+    { "sid": "s5_03", "text": "VAULT" },
+    { "sid": "s5_04", "text": "ALARM" },
+    { "sid": "s5_05", "text": "SNEAK" },
+
+    { "sid": "s4_01", "text": "MUSE" },
+    { "sid": "s4_02", "text": "MASK" },
+    { "sid": "s4_03", "text": "COIN" },
+    { "sid": "s4_04", "text": "CASE" },
+    { "sid": "s4_05", "text": "LOCK" },
+    { "sid": "s4_06", "text": "GOLD" },
+
+    { "sid": "s3_01", "text": "ART" },
+    { "sid": "s3_02", "text": "KEY" },
+    { "sid": "s3_03", "text": "MAP" },
+    { "sid": "s3_04", "text": "VAN" },
+    { "sid": "s3_05", "text": "HID" },
+    { "sid": "s3_06", "text": "EEL" },
+    { "sid": "s3_07", "text": "LED" },
+
+    { "sid": "s2_01", "text": "ED" },
+    { "sid": "s2_02", "text": "ER" },
+    { "sid": "s2_03", "text": "RE" },
+    { "sid": "s2_04", "text": "UN" },
+    { "sid": "s2_05", "text": "IN" },
+    { "sid": "s2_06", "text": "ON" },
+    { "sid": "s2_07", "text": "AT" },
+    { "sid": "s2_08", "text": "UP" },
+
+    { "sid": "s1_01", "text": "S" },
+    { "sid": "s1_02", "text": "E" },
+    { "sid": "s1_03", "text": "R" },
+    { "sid": "s1_04", "text": "A" },
+    { "sid": "s1_05", "text": "T" },
+    { "sid": "s1_06", "text": "N" },
+    { "sid": "s1_07", "text": "O" },
+    { "sid": "s1_08", "text": "I" },
+    { "sid": "s1_09", "text": "L" },
+    { "sid": "s1_10", "text": "D" },
+    { "sid": "s1_11", "text": "P" },
+    { "sid": "s1_12", "text": "C" },
+    { "sid": "s1_13", "text": "U" },
+    { "sid": "s1_14", "text": "H" },
+    { "sid": "s1_15", "text": "Y" },
+    { "sid": "s1_16", "text": "X" }
+  ],
+  "bonus": {
+    "target_words": ["VAULT", "ALARM", "SCROL"],
+    "target_morphemes": ["RE", "UN", "ED"],
+    "red_herrings": ["GOLD", "MASK", "COIN"]
+  }
+}
