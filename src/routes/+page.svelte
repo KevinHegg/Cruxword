@@ -82,11 +82,11 @@
 				const scaledWidth = targetWidth * scale;
 				boardSize = `${Math.max(300, Math.min(500, scaledWidth))}px`;
 			} else {
-				// Mobile: use viewport, reserve space for headers (~180px) and bank (~220px)
-				const availableHeight = vh - 400;
+				// Mobile: use viewport, reserve more space for headers (~180px) and bank (~250px for 3 rows)
+				const availableHeight = vh - 430; // Increased reserve for 3 rows
 				const availableWidth = vw - 40; // 20px padding each side
 				const baseSize = Math.min(availableWidth, availableHeight);
-				boardSize = `${Math.max(200, Math.min(450, baseSize))}px`;
+				boardSize = `${Math.max(200, Math.min(400, baseSize))}px`; // Reduced max to prevent clipping
 			}
 		};
 		calculateBoardSize();
@@ -160,11 +160,12 @@
 		bag = pickRandomBag();
 		bagIssues = validateBagShape(bag);
 		let newSticks = bagToSticks(bag);
-		// Shuffle sticks for random layout
-		for (let i = newSticks.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			[newSticks[i], newSticks[j]] = [newSticks[j], newSticks[i]];
-		}
+		// Sort sticks by length descending (5, 4, 3, 2, 1)
+		newSticks.sort((a, b) => {
+			const lenA = a.text.length;
+			const lenB = b.text.length;
+			return lenB - lenA; // Descending order
+		});
 		sticks = newSticks;
 		board = createEmptyBoard(10, 10);
 		history = [];
@@ -220,6 +221,20 @@
 
 	function toggleStickOrientation(sid: string) {
 		sticks = sticks.map((s) => (s.sid === sid ? { ...s, orientation: rotateOrientation(s.orientation) } : s));
+	}
+	
+	function toggleAllStickOrientations() {
+		// Toggle orientation for all unplaced sticks
+		sticks = sticks.map((s) => (!s.placed ? { ...s, orientation: rotateOrientation(s.orientation) } : s));
+	}
+	
+	function sortSticksByLength() {
+		// Sort by length descending (5, 4, 3, 2, 1)
+		sticks = [...sticks].sort((a, b) => {
+			const lenA = a.text.length;
+			const lenB = b.text.length;
+			return lenB - lenA; // Descending order
+		});
 	}
 
 	// ---- placing via tap
@@ -333,6 +348,11 @@
 	}
 	
 	function handleCellPointerDown(r: number, c: number, e: MouseEvent | PointerEvent) {
+		// Don't start drag if already dragging from bank
+		if (draggingSid) {
+			return;
+		}
+		
 		const cell = board.cells[r][c];
 		if (!cell || cell.stickIds.length === 0) return;
 		
@@ -349,7 +369,7 @@
 				(e.target as HTMLElement).setPointerCapture(e.pointerId);
 			}
 			e.preventDefault();
-		}, 400); // 400ms hold to start drag (longer to prevent accidental moves)
+		}, 500); // 500ms hold to start drag (longer to prevent accidental moves)
 	}
 	
 	function handleCellPointerUp(r: number, c: number, e: MouseEvent | PointerEvent) {
@@ -940,16 +960,8 @@
 				<div class="bankActions">
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn" disabled={!selectedSid} on:click={() => {
-						if (selectedSid) toggleStickOrientation(selectedSid);
-					}} title="Rotate selected stick orientation">
-						{#if selectedSid}
-							{@const selectedStickOrientation = sticks.find((s) => s.sid === selectedSid)?.orientation}
-							{#if selectedStickOrientation === 'H'} ⟷ {:else} ↕ {/if}
-						{:else}
-							↻
-						{/if}
-					</button>
+					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations">⟷</button>
+					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⌂</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -1543,10 +1555,11 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 4px 6px; /* reduced top/bottom padding */
+		padding: 2px 6px; /* further reduced top/bottom padding */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: none; /* allows pointer-based drag */
+		min-height: 22px; /* shorter height */
 	}
 
 	.stick.selected {
@@ -1648,12 +1661,14 @@
 	}
 
 	.modal {
-		width: min(92vw, 420px);
+		width: calc(100vw - 20px); /* Match clue bar width (screen width - padding) */
+		max-width: 373px; /* Match clue bar on desktop (393px - 20px) */
 		border-radius: 18px;
 		border: 1px solid rgba(255,255,255,0.14);
 		background: rgba(10, 14, 30, 0.96);
 		backdrop-filter: blur(12px);
 		padding: 14px;
+		margin: 0 auto; /* Center horizontally */
 	}
 
 	.modalTitle {
