@@ -4,6 +4,7 @@
 	import { bagToSticks, validateBagShape } from '$lib/game/bag';
 	import { canPlaceStick, createEmptyBoard, moveStick, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
 	import { validateAndScore } from '$lib/game/scoring';
+	import { loadDictionary, isValidWord } from '$lib/game/dictionary';
 	import type { BoardState, MorphemeBag, Stick } from '$lib/game/types';
 
 	let bag: MorphemeBag = pickRandomBag();
@@ -18,6 +19,10 @@
 	
 	// Fixed board size (calculated once on mount)
 	let boardSize = 'min(calc(100vw - 40px), calc(100vh - 420px))';
+	
+	// Dictionary for word validation
+	let dictionary: Set<string> = new Set();
+	let dictionaryLoaded = false;
 
 	// Simple history for undo/redo
 	let history: BoardState[] = [];
@@ -51,18 +56,28 @@
 
 	// ---- lifecycle
 	onMount(() => {
-		// Calculate and lock board size once - make it bigger on desktop
+		// Load dictionary asynchronously
+		loadDictionary().then((dict) => {
+			dictionary = dict;
+			dictionaryLoaded = true;
+		});
+		
+		// Calculate and lock board size once - match iPhone 17 Pro on desktop
 		const calculateBoardSize = () => {
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
-			// For desktop (wider screens), make board much bigger
+			// For desktop (wider screens), size to match iPhone 17 Pro (393x852)
 			const isDesktop = vw > 768;
 			if (isDesktop) {
-				// Desktop: use more of the screen
-				const baseSize = Math.min(vw - 120, vh - 250);
-				boardSize = `${Math.max(400, Math.min(700, baseSize))}px`;
+				// iPhone 17 Pro dimensions: 393x852 (portrait)
+				// Scale to fit but maintain aspect ratio
+				const targetWidth = 393;
+				const targetHeight = 852;
+				const scale = Math.min((vw - 40) / targetWidth, (vh - 200) / targetHeight);
+				const scaledWidth = targetWidth * scale;
+				boardSize = `${Math.max(350, Math.min(600, scaledWidth))}px`;
 			} else {
-				// Mobile: smaller
+				// Mobile: use viewport
 				const baseSize = Math.min(vw - 40, vh - 420);
 				boardSize = `${Math.max(200, Math.min(500, baseSize))}px`;
 			}
@@ -201,8 +216,11 @@
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return;
 
-		const ok = canPlaceStick(board, stick, r, c);
-		if (!ok.ok) return;
+		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
+		if (!ok.ok) {
+			console.warn('Cannot place stick:', ok.reason);
+			return;
+		}
 
 		pushHistory();
 		board = placeStick(board, stick, r, c);
@@ -302,7 +320,7 @@
 		}
 	}
 	
-	function handleCellPointerDown(r: number, c: number, e: PointerEvent) {
+	function handleCellPointerDown(r: number, c: number, e: MouseEvent | PointerEvent) {
 		const cell = board.cells[r][c];
 		if (!cell || cell.stickIds.length === 0) return;
 		
@@ -315,30 +333,33 @@
 			selectedPlacedSid = sid;
 			dragX = e.clientX;
 			dragY = e.clientY;
-			(e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+			if ('pointerId' in e && (e.target as HTMLElement)?.setPointerCapture) {
+				(e.target as HTMLElement).setPointerCapture(e.pointerId);
+			}
 			e.preventDefault();
 		}, 200); // 200ms hold to start drag
 	}
 	
-	function handleCellPointerUp(r: number, c: number, e: PointerEvent) {
+	function handleCellPointerUp(r: number, c: number, e: MouseEvent | PointerEvent) {
 		if (dragHoldTimer) {
 			clearTimeout(dragHoldTimer);
 			dragHoldTimer = null;
 		}
 		
-		if (draggingPlacedSid && dragOverCell) {
+		if (draggingPlacedSid && dragOverCell && dragStartCell) {
 			// Move the stick/cluster
 			const placed = board.placed[draggingPlacedSid];
 			if (placed) {
 				// Calculate offset from original position
-				const dr = dragOverCell.r - dragStartCell!.r;
-				const dc = dragOverCell.c - dragStartCell!.c;
+				const dr = dragOverCell.r - dragStartCell.r;
+				const dc = dragOverCell.c - dragStartCell.c;
 				const newRow = placed.row + dr;
 				const newCol = placed.col + dc;
 				
 				// If it's a cluster (intersection), we need to move all connected sticks
-				if (board.cells[dragStartCell!.r][dragStartCell!.c]?.stickIds.length > 1) {
-					moveCluster(dragStartCell!.r, dragStartCell!.c, dr, dc);
+				const startCell = board.cells[dragStartCell.r]?.[dragStartCell.c];
+				if (startCell && startCell.stickIds.length > 1) {
+					moveCluster(dragStartCell.r, dragStartCell.c, dr, dc);
 				} else {
 					// Single stick
 					pushHistory();
@@ -548,7 +569,7 @@
 			if (dragOverCell) {
 				const stick = sticks.find((s) => s.sid === sid);
 				if (stick && !stick.placed) {
-					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c);
+					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c, bag.constraints.max_intersections_per_wordpair);
 					if (ok.ok) {
 						pushHistory();
 						board = placeStick(board, stick, dragOverCell.r, dragOverCell.c);
@@ -568,7 +589,7 @@
 	let submitResult: { ok: boolean; issues: string[]; score: number; densityPct: number; wordCount: number } | null = null;
 
 	function submit() {
-		const res = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair);
+		const res = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
 
 		submitResult = {
 			ok: res.ok,
@@ -825,10 +846,11 @@
 
 	<!-- drag ghost -->
 	{#if draggingSid}
-		{#if sticks.find((s) => s.sid === draggingSid) as ds}
+		{@const draggedStick = sticks.find((s) => s.sid === draggingSid)}
+		{#if draggedStick}
 			<div class="dragGhost" style="left:{dragX}px; top:{dragY}px;">
 				<div class="stickTiles">
-					{#each ds.text.split('') as ch}
+					{#each draggedStick.text.split('') as ch}
 						<div class="tile">{ch}</div>
 					{/each}
 				</div>
@@ -838,10 +860,11 @@
 	
 	<!-- drag ghost for placed stick -->
 	{#if draggingPlacedSid}
-		{#if board.placed[draggingPlacedSid] as placed}
+		{@const placedStick = board.placed[draggingPlacedSid]}
+		{#if placedStick}
 			<div class="dragGhost" style="left:{dragX}px; top:{dragY}px;">
 				<div class="stickTiles">
-					{#each placed.text.split('') as ch}
+					{#each placedStick.text.split('') as ch}
 						<div class="tile">{ch}</div>
 					{/each}
 				</div>
@@ -900,13 +923,21 @@
 	.screen {
 		max-width: 100vw;
 		width: 100%;
-		margin: 0;
+		margin: 0 auto;
 		touch-action: manipulation; /* helps prevent double-tap zoom */
 		overflow-x: hidden; /* prevent horizontal scroll */
 		height: 100vh;
 		height: 100dvh; /* dynamic viewport height for mobile */
 		display: flex;
 		flex-direction: column;
+	}
+	
+	/* On desktop, center and size to iPhone 17 Pro */
+	@media (min-width: 769px) {
+		.screen {
+			max-width: 393px; /* iPhone 17 Pro width */
+			box-shadow: 0 0 20px rgba(0,0,0,0.3);
+		}
 	}
 
 	.top {
@@ -1063,6 +1094,7 @@
 		padding: 0 10px;
 		align-items: center;
 		justify-content: flex-start;
+		margin: 0 auto;
 	}
 
 	.board {
@@ -1112,8 +1144,8 @@
 
 	.letter {
 		font-weight: 800;
-		font-size: clamp(10px, 2.2vw, 16px);
-		letter-spacing: 0.6px;
+		font-size: clamp(14px, 3.5vw, 24px);
+		letter-spacing: 0.8px;
 	}
 
 	.bankActions .iconBtn {

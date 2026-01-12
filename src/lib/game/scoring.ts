@@ -6,7 +6,7 @@ function fibBonus(len: number): number {
 	return map[len] ?? 0;
 }
 
-export function validateAndScore(board: BoardState, minWordLen = 3, requireSingleCluster = true, maxIntersectionsPerWordPair = 1): ValidationResult {
+export function validateAndScore(board: BoardState, minWordLen = 3, requireSingleCluster = true, maxIntersectionsPerWordPair = 1, dictionary?: Set<string>): ValidationResult {
 	const issues: string[] = [];
 	const rows = board.rows;
 	const cols = board.cols;
@@ -122,8 +122,32 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		}
 	}
 
-	// Score
-	const validWords = words.filter((w) => w.len >= minWordLen);
+	// Filter valid words (length and dictionary check)
+	const validWords = words.filter((w) => {
+		if (w.len < minWordLen) return false;
+		// Check dictionary if available
+		if (dictionary && dictionary.size > 0) {
+			const wordText = w.text.replace(/\*/g, ''); // Remove wildcards for dictionary check
+			if (wordText.length < minWordLen) return false;
+			// For now, allow words with wildcards (could enhance later)
+			if (w.text.includes('*')) return true; // Wildcard words allowed
+			return dictionary.has(w.text);
+		}
+		return true; // If no dictionary, allow all words
+	});
+	
+	// Check for invalid words
+	if (dictionary && dictionary.size > 0) {
+		const invalidWords = words.filter((w) => {
+			if (w.len < minWordLen) return false;
+			if (w.text.includes('*')) return false; // Wildcard words allowed
+			return !dictionary.has(w.text);
+		});
+		if (invalidWords.length > 0) {
+			issues.push(`Submit blocked: invalid words found: ${invalidWords.map(w => `"${w.text}"`).join(', ')}`);
+		}
+	}
+
 	let score = 0;
 	for (const w of validWords) {
 		score += w.len;
