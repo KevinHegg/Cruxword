@@ -8,7 +8,7 @@
     "answer_index": 3
   },
   "constraints": {
-    "grid": { "rows": 10, "cols": 10 },
+    "grid": { "rows": 12, "cols": 12 },
     "min_word_len": 3,
     "submit_requires_single_cluster": true,
     "max_intersections_per_wordpair": 1

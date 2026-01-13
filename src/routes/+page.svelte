@@ -10,7 +10,7 @@
 	let bag: MorphemeBag = pickRandomBag();
 	let bagIssues: string[] = [];
 	let sticks: Stick[] = [];
-	let board: BoardState = createEmptyBoard(10, 10);
+	let board: BoardState = createEmptyBoard(12, 12);
 
 	let selectedSid: string | null = null;
 	let showCheat = true;
@@ -41,7 +41,7 @@
 
 	// UI computed
 	$: filledCells = countFilled(board);
-	$: densityPct = Math.round((filledCells / 100) * 100);
+	$: densityPct = Math.round((filledCells / 144) * 100);
 	$: remainingCount = sticks.filter((s) => !s.placed).length;
 
 	$: selectedStick = selectedSid ? sticks.find((s) => s.sid === selectedSid) ?? null : null;
@@ -81,30 +81,30 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate and lock board size once - ensure it fits without clipping
+		// Calculate and lock board size once - size to fill vertical canvas space
 		const calculateBoardSize = () => {
 			const vw = window.innerWidth;
 			const vh = window.innerHeight;
-			// For desktop (wider screens), size to match iPhone 17 Pro (393x852)
 			const isDesktop = vw > 768;
-			if (isDesktop) {
-				// iPhone 17 Pro dimensions: 393x852 (portrait)
-				// Scale to fit but maintain aspect ratio, leave more room for headers/bank
-				const targetWidth = 393;
-				const targetHeight = 852;
-				// Reserve space: ~200px for headers/clue bar, ~250px for morpheme bank
-				const availableHeight = vh - 480; // Increased reserve to prevent clipping
-				const availableWidth = vw - 60; // padding + margins
-				const scale = Math.min(availableWidth / targetWidth, availableHeight / targetHeight);
-				const scaledWidth = targetWidth * scale;
-				boardSize = `${Math.max(300, Math.min(480, scaledWidth))}px`; // Reduced max to prevent clipping
-			} else {
-				// Mobile: use viewport, reserve more space for headers (~180px) and bank (~250px for 3 rows)
-				const availableHeight = vh - 460; // Increased reserve to prevent clipping
-				const availableWidth = vw - 40; // 20px padding each side
-				const baseSize = Math.min(availableWidth, availableHeight);
-				boardSize = `${Math.max(200, Math.min(380, baseSize))}px`; // Reduced max to prevent clipping
-			}
+			
+			// Reserve space for UI elements (more accurate for 12x12 board)
+			// Header: ~120px, Clue bar: ~40px, Bank: ~200px, Padding: ~40px
+			const reservedHeight = isDesktop ? 400 : 360;
+			const availableHeight = Math.max(0, vh - reservedHeight);
+			
+			// Reserve space for side padding
+			const reservedWidth = isDesktop ? 60 : 20;
+			const availableWidth = Math.max(0, vw - reservedWidth);
+			
+			// Size board to fill available vertical space (height-based, as requested)
+			// Board is square, so use the smaller of available height or width
+			const boardDimension = Math.min(availableHeight, availableWidth);
+			
+			// Ensure minimum size and reasonable maximum for mobile
+			// For 12x12, we need slightly larger minimums
+			const minSize = isDesktop ? 400 : 300;
+			const maxSize = isDesktop ? 650 : 500;
+			boardSize = `${Math.max(minSize, Math.min(maxSize, boardDimension))}px`;
 		};
 		calculateBoardSize();
 		
@@ -208,7 +208,7 @@
 			return lenB - lenA; // Descending order
 		});
 		sticks = newSticks;
-		board = createEmptyBoard(10, 10);
+		board = createEmptyBoard(12, 12);
 		history = [];
 		redoHistory = [];
 		selectedSid = null;
@@ -286,6 +286,9 @@
 		if (!selectedSid) return;
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return;
+		
+		// Bounds check
+		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return;
 
 		// Calculate placement position: clicked tile is where FIRST letter goes
 		// For horizontal: first letter at (r, c), rest extends right
@@ -293,7 +296,7 @@
 		// So placement row/col is just (r, c)
 		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
 		if (!ok.ok) {
-			console.warn('Cannot place stick:', ok.reason);
+			// Silently fail - user will see invalid shadow preview
 			return;
 		}
 
@@ -306,6 +309,9 @@
 
 	// ---- board stick selection + move/return
 	function tapCellSelect(r: number, c: number) {
+		// Bounds check
+		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return;
+		
 		const cell = board.cells[r][c];
 		if (!cell || cell.stickIds.length === 0) {
 			selectedPlacedSid = null;
@@ -496,7 +502,7 @@
 		</div>
 
 		<div class="statsRow">
-			<div class="stat">Tiles {filledCells}/100</div>
+			<div class="stat">Tiles {filledCells}/144</div>
 			<div class="stat">Density {densityPct}%</div>
 			<div class="stat">Bag {remainingCount} left</div>
 
@@ -524,9 +530,9 @@
 	<main class="main">
 		<!-- Board wrapper ensures no horizontal cutoff on iPhone -->
 		<div class="boardWrap">
-			<div class="board" style="--rows: 10; --cols: 10; width: {boardSize}; height: {boardSize};" aria-label="10 by 10 board">
-				{#each Array(10) as _, r}
-					{#each Array(10) as __, c}
+			<div class="board" style="--rows: 12; --cols: 12; width: {boardSize}; height: {boardSize};" aria-label="12 by 12 board">
+				{#each Array(12) as _, r}
+					{#each Array(12) as __, c}
 						<!-- data-r/data-c used by elementFromPoint drag placement -->
 						{@const cell = board.cells[r][c]}
 						{@const cellStickIds = cell ? cell.stickIds : []}
@@ -564,7 +570,7 @@
 						{#each Array(selectedStick.text.length) as _, i}
 							{@const shadowR = hoverCell.r + dr * i}
 							{@const shadowC = hoverCell.c + dc * i}
-							{#if shadowR >= 0 && shadowR < 10 && shadowC >= 0 && shadowC < 10}
+							{#if shadowR >= 0 && shadowR < 12 && shadowC >= 0 && shadowC < 12}
 								<div 
 									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
 									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
@@ -592,13 +598,12 @@
 									<div class="cheatSectionTitle">Smartphone Touch/Tap Controls</div>
 									<ul class="cheatList">
 										<li><span class="hang">Tap</span> a morpheme stick to select it</li>
-										<li><span class="hang">Tap</span> a board cell to place</li>
-										<li><span class="hang">Hold</span> a stick in the bank to drag-drop onto the board</li>
+										<li><span class="hang">Tap</span> an empty board cell to place selected stick</li>
 										<li><span class="hang">Tap</span> a placed tile to select its stick</li>
-										<li><span class="hang">Double-tap</span> a placed stick to return it</li>
+										<li><span class="hang">Double-tap</span> a placed stick to return it to bank</li>
 										<li><span class="hang">Double-tap</span> an intersection to disassemble cluster</li>
-										<li><span class="hang">Hold</span> a placed stick to drag it</li>
-										<li><span class="hang">↻</span> rotates a selected stick (90° only)</li>
+										<li><span class="hang">⟷</span> button rotates all unplaced sticks</li>
+										<li><span class="hang">⇊</span> button sorts sticks by length</li>
 										<li><span class="hang">Submit</span> checks legality + scores density/words</li>
 									</ul>
 								</div>
@@ -896,8 +901,8 @@
 		position: relative;
 		aspect-ratio: 1 / 1; /* square board */
 		display: grid;
-		grid-template-columns: repeat(10, 1fr);
-		grid-template-rows: repeat(10, 1fr);
+		grid-template-columns: repeat(12, 1fr);
+		grid-template-rows: repeat(12, 1fr);
 		gap: 0; /* no padding between cells */
 		border-radius: 16px;
 		overflow: hidden; /* clip shadows that go outside */
@@ -924,11 +929,18 @@
 		aspect-ratio: 1 / 1; /* ensure square tiles */
 		position: relative;
 		z-index: 1; /* Base z-index for regular cells */
+		transition: opacity 0.1s ease, transform 0.1s ease;
+		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
+	}
+	
+	.cell:active {
+		opacity: 0.7;
+		transform: scale(0.95);
 	}
 
 	/* remove outer extra lines look */
-	.cell:nth-child(10n) { border-right: none; }
-	.board > .cell:nth-last-child(-n + 10) { border-bottom: none; }
+	.cell:nth-child(12n) { border-right: none; }
+	.board > .cell:nth-last-child(-n + 12) { border-bottom: none; }
 
 	.cell.filled {
 		background: rgba(255,255,255,0.05);
@@ -943,8 +955,8 @@
 
 	.letter {
 		font-weight: 800;
-		font-size: clamp(14px, 3.5vw, 24px);
-		letter-spacing: 0.8px;
+		font-size: clamp(12px, 2.8vw, 20px);
+		letter-spacing: 0.6px;
 	}
 
 	/* Shadow preview for drag placement - rendered as grid children that overlay */
@@ -1193,8 +1205,15 @@
 		padding: 0px 6px; /* reduced by 5px top and bottom (was 2px, now 0px) */
 		user-select: none;
 		-webkit-user-select: none;
-		touch-action: none; /* allows pointer-based drag */
+		touch-action: manipulation; /* optimized for touch */
 		min-height: 22px; /* shorter height */
+		transition: opacity 0.15s ease, transform 0.15s ease;
+		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
+	}
+	
+	.stick:active {
+		opacity: 0.8;
+		transform: scale(0.97);
 	}
 
 	.stick.selected {

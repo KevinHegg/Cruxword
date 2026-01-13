@@ -1,6 +1,6 @@
 import type { BoardState, Cell, Orientation, PlacedStick, Stick } from './types';
 
-export function createEmptyBoard(rows = 10, cols = 10): BoardState {
+export function createEmptyBoard(rows = 12, cols = 12): BoardState {
 	const cells: (Cell | null)[][] = Array.from({ length: rows }, () =>
 		Array.from({ length: cols }, () => null)
 	);
