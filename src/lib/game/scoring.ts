@@ -98,15 +98,46 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		}
 	}
 
+	// Filter out sub-words: if a word is contained within a longer word in the same direction, remove it
+	const filteredWords: typeof words = [];
+	for (const w of words) {
+		let isSubWord = false;
+		for (const other of words) {
+			if (w === other) continue;
+			if (w.dir !== other.dir) continue;
+			if (w.len >= other.len) continue; // w is longer or equal, can't be sub-word
+			
+			// Check if w is a sub-word of other
+			if (w.dir === 'H' && w.row === other.row) {
+				// Same row: check if w's cells are all within other's cells
+				const otherCells = new Set(other.cells);
+				if (w.cells.every(cell => otherCells.has(cell))) {
+					isSubWord = true;
+					break;
+				}
+			} else if (w.dir === 'V' && w.col === other.col) {
+				// Same column: check if w's cells are all within other's cells
+				const otherCells = new Set(other.cells);
+				if (w.cells.every(cell => otherCells.has(cell))) {
+					isSubWord = true;
+					break;
+				}
+			}
+		}
+		if (!isSubWord) {
+			filteredWords.push(w);
+		}
+	}
+	
 	// No short runs (strict MVP): forbid any 1–2 letter horizontal/vertical runs
-	const shortRuns = words.filter((w) => w.len > 0 && w.len < minWordLen);
+	const shortRuns = filteredWords.filter((w) => w.len > 0 && w.len < minWordLen);
 	if (shortRuns.length) {
 		issues.push(`Submit blocked: found ${shortRuns.length} short run(s) (length 1–2).`);
 	}
 
 	// Intersection rule: any H word and V word share <=1 cell
-	const hWords = words.filter((w) => w.dir === 'H' && w.len >= minWordLen);
-	const vWords = words.filter((w) => w.dir === 'V' && w.len >= minWordLen);
+	const hWords = filteredWords.filter((w) => w.dir === 'H' && w.len >= minWordLen);
+	const vWords = filteredWords.filter((w) => w.dir === 'V' && w.len >= minWordLen);
 
 	for (const h of hWords) {
 		for (const v of vWords) {
@@ -123,7 +154,7 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 	}
 
 	// Filter valid words (length and dictionary check)
-	const validWords = words.filter((w) => {
+	const validWords = filteredWords.filter((w) => {
 		if (w.len < minWordLen) return false;
 		// Check dictionary if available
 		if (dictionary && dictionary.size > 0) {
@@ -136,9 +167,9 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		return true; // If no dictionary, allow all words
 	});
 	
-	// Check for invalid words
+	// Check for invalid words (use filteredWords to avoid duplicates)
 	if (dictionary && dictionary.size > 0) {
-		const invalidWords = words.filter((w) => {
+		const invalidWords = filteredWords.filter((w) => {
 			if (w.len < minWordLen) return false;
 			if (w.text.includes('*')) return false; // Wildcard words allowed
 			return !dictionary.has(w.text);

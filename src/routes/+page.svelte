@@ -28,18 +28,8 @@
 	let history: BoardState[] = [];
 	let redoHistory: BoardState[] = [];
 
-	// Pointer/drag state (bank -> board)
-	let draggingSid: string | null = null;
-	let dragX = 0;
-	let dragY = 0;
-	let dragOverCell: { r: number; c: number } | null = null;
-	let dragPlacementValid: boolean = false; // for shadow preview
-	
-	// Board drag state (placed stick/cluster -> new position)
-	let draggingPlacedSid: string | null = null;
-	let dragStartCell: { r: number; c: number } | null = null;
-	let dragHoldTimer: ReturnType<typeof setTimeout> | null = null;
-	let dragPlacementValidCluster: boolean = false; // for cluster drag shadow
+	// Shadow preview state (when stick is selected)
+	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
@@ -55,6 +45,33 @@
 	$: remainingCount = sticks.filter((s) => !s.placed).length;
 
 	$: selectedStick = selectedSid ? sticks.find((s) => s.sid === selectedSid) ?? null : null;
+	
+	// Computed: disable submit button when structure is invalid
+	$: submitValidation = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
+	$: submitDisabled = !submitValidation.ok;
+	
+	// Computed: get invalid words for highlighting
+	$: invalidWordCells = new Set<string>();
+	$: {
+		invalidWordCells.clear();
+		if (dictionary && dictionary.size > 0) {
+			// Get all words from validation result
+			for (const word of submitValidation.words) {
+				if (word.len < bag.constraints.min_word_len) continue;
+				if (word.text.includes('*')) continue; // Wildcard words allowed
+				if (!dictionary.has(word.text)) {
+					// Mark all cells of this invalid word
+					const dr = word.dir === 'V' ? 1 : 0;
+					const dc = word.dir === 'H' ? 1 : 0;
+					for (let i = 0; i < word.len; i++) {
+						const r = word.row + dr * i;
+						const c = word.col + dc * i;
+						invalidWordCells.add(`${r},${c}`);
+					}
+				}
+			}
+		}
+	}
 
 	// ---- lifecycle
 	onMount(() => {
@@ -76,17 +93,17 @@
 				const targetWidth = 393;
 				const targetHeight = 852;
 				// Reserve space: ~200px for headers/clue bar, ~250px for morpheme bank
-				const availableHeight = vh - 450;
+				const availableHeight = vh - 480; // Increased reserve to prevent clipping
 				const availableWidth = vw - 60; // padding + margins
 				const scale = Math.min(availableWidth / targetWidth, availableHeight / targetHeight);
 				const scaledWidth = targetWidth * scale;
-				boardSize = `${Math.max(300, Math.min(500, scaledWidth))}px`;
+				boardSize = `${Math.max(300, Math.min(480, scaledWidth))}px`; // Reduced max to prevent clipping
 			} else {
 				// Mobile: use viewport, reserve more space for headers (~180px) and bank (~250px for 3 rows)
-				const availableHeight = vh - 430; // Increased reserve for 3 rows
+				const availableHeight = vh - 460; // Increased reserve to prevent clipping
 				const availableWidth = vw - 40; // 20px padding each side
 				const baseSize = Math.min(availableWidth, availableHeight);
-				boardSize = `${Math.max(200, Math.min(400, baseSize))}px`; // Reduced max to prevent clipping
+				boardSize = `${Math.max(200, Math.min(380, baseSize))}px`; // Reduced max to prevent clipping
 			}
 		};
 		calculateBoardSize();
@@ -155,6 +172,30 @@
 			window.removeEventListener('keydown', handleKeyDown);
 		};
 	});
+
+	// Muted color palette for sticks (dark theme friendly)
+	const stickColors = [
+		'rgba(100, 150, 200, 0.3)',   // muted blue
+		'rgba(150, 100, 200, 0.3)',   // muted purple
+		'rgba(200, 100, 150, 0.3)',   // muted pink
+		'rgba(100, 200, 150, 0.3)',   // muted green
+		'rgba(200, 150, 100, 0.3)',   // muted orange
+		'rgba(150, 200, 200, 0.3)',   // muted cyan
+		'rgba(200, 200, 100, 0.3)',   // muted yellow
+		'rgba(200, 100, 100, 0.3)',   // muted red
+		'rgba(100, 200, 200, 0.3)',   // muted teal
+		'rgba(150, 150, 200, 0.3)'    // muted lavender
+	];
+	
+	function getStickColor(sid: string): string {
+		// Hash sid to get consistent color
+		let hash = 0;
+		for (let i = 0; i < sid.length; i++) {
+			hash = ((hash << 5) - hash) + sid.charCodeAt(i);
+			hash = hash & hash; // Convert to 32bit integer
+		}
+		return stickColors[Math.abs(hash) % stickColors.length];
+	}
 
 	function startNewGame() {
 		bag = pickRandomBag();
@@ -228,6 +269,9 @@
 		sticks = sticks.map((s) => (!s.placed ? { ...s, orientation: rotateOrientation(s.orientation) } : s));
 	}
 	
+	// Computed: check if any unplaced stick is horizontal
+	$: hasHorizontalSticks = sticks.some((s) => !s.placed && s.orientation === 'H');
+	
 	function sortSticksByLength() {
 		// Sort by length descending (5, 4, 3, 2, 1)
 		sticks = [...sticks].sort((a, b) => {
@@ -243,6 +287,10 @@
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return;
 
+		// Calculate placement position: clicked tile is where FIRST letter goes
+		// For horizontal: first letter at (r, c), rest extends right
+		// For vertical: first letter at (r, c), rest extends down
+		// So placement row/col is just (r, c)
 		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
 		if (!ok.ok) {
 			console.warn('Cannot place stick:', ok.reason);
@@ -253,6 +301,7 @@
 		board = placeStick(board, stick, r, c);
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
+		hoverCell = null; // Clear hover on placement
 	}
 
 	// ---- board stick selection + move/return
@@ -268,24 +317,23 @@
 	}
 	
 	function handleCellClick(r: number, c: number) {
-		// Simple click handler - no event parameter needed
-		// Don't handle if currently dragging
-		if (draggingSid || draggingPlacedSid) {
-			return;
-		}
-		
-		// Clear any pending drag hold timer
-		if (dragHoldTimer) {
-			clearTimeout(dragHoldTimer);
-			dragHoldTimer = null;
-		}
-		
 		// Handle click: select or place
 		if (board.cells[r][c]) {
 			tapCellSelect(r, c);
 		} else {
 			tapPlace(r, c);
 		}
+	}
+	
+	function handleCellMouseEnter(r: number, c: number) {
+		// Track hover for shadow preview
+		if (selectedSid) {
+			hoverCell = { r, c };
+		}
+	}
+	
+	function handleCellMouseLeave() {
+		hoverCell = null;
 	}
 	
 	function handleCellDoubleClick(r: number, c: number, e: MouseEvent) {
@@ -304,12 +352,6 @@
 	}
 	
 	function handleCellTouch(r: number, c: number, e: TouchEvent) {
-		// Clear any pending drag hold timer
-		if (dragHoldTimer) {
-			clearTimeout(dragHoldTimer);
-			dragHoldTimer = null;
-		}
-		
 		e.preventDefault();
 		e.stopPropagation();
 		
@@ -347,145 +389,7 @@
 		}
 	}
 	
-	function handleCellPointerDown(r: number, c: number, e: MouseEvent | PointerEvent) {
-		// Don't start drag if already dragging from bank
-		if (draggingSid) {
-			return;
-		}
-		
-		const cell = board.cells[r][c];
-		if (!cell || cell.stickIds.length === 0) return;
-		
-		// Start hold timer for drag
-		dragStartCell = { r, c };
-		dragHoldTimer = setTimeout(() => {
-			// Hold detected: start dragging
-			const sid = cell.stickIds[cell.stickIds.length - 1]; // use most recent
-			draggingPlacedSid = sid;
-			selectedPlacedSid = sid;
-			dragX = e.clientX;
-			dragY = e.clientY;
-			if ('pointerId' in e && (e.target as HTMLElement)?.setPointerCapture) {
-				(e.target as HTMLElement).setPointerCapture(e.pointerId);
-			}
-			e.preventDefault();
-		}, 500); // 500ms hold to start drag (longer to prevent accidental moves)
-	}
-	
-	function handleCellPointerUp(r: number, c: number, e: MouseEvent | PointerEvent) {
-		if (dragHoldTimer) {
-			clearTimeout(dragHoldTimer);
-			dragHoldTimer = null;
-		}
-		
-		if (draggingPlacedSid && dragOverCell && dragStartCell && dragPlacementValidCluster) {
-			// Move the stick/cluster
-			const placed = board.placed[draggingPlacedSid];
-			if (placed) {
-				// Calculate offset from original position
-				const dr = dragOverCell.r - dragStartCell.r;
-				const dc = dragOverCell.c - dragStartCell.c;
-				const newRow = placed.row + dr;
-				const newCol = placed.col + dc;
-				
-				// If it's a cluster (intersection), we need to move all connected sticks
-				const startCell = board.cells[dragStartCell.r]?.[dragStartCell.c];
-				if (startCell && startCell.stickIds.length > 1) {
-					moveCluster(dragStartCell.r, dragStartCell.c, dr, dc);
-				} else {
-					// Single stick
-					pushHistory();
-					board = moveStick(board, draggingPlacedSid, newRow, newCol);
-				}
-			}
-		}
-		// If placement was invalid, stick/cluster stays in original position
-		
-		draggingPlacedSid = null;
-		dragStartCell = null;
-		dragOverCell = null;
-		dragPlacementValidCluster = false;
-		e.preventDefault();
-	}
-	
-	function moveCluster(startR: number, startC: number, dr: number, dc: number) {
-		const cell = board.cells[startR][startC];
-		if (!cell) return;
-		
-		// Get all sticks in the cluster (connected via this intersection)
-		// Use BFS to find all connected cells, then get ALL sticks that pass through any of those cells
-		const clusterSticks = new Set<string>();
-		const visited = new Set<string>();
-		const queue: [number, number][] = [[startR, startC]];
-		
-		// BFS to find all connected cells
-		while (queue.length > 0) {
-			const [r, c] = queue.shift()!;
-			const key = `${r},${c}`;
-			if (visited.has(key)) continue;
-			visited.add(key);
-			
-			const cell = board.cells[r][c];
-			if (!cell) continue;
-			
-			// Add all sticks that pass through this cell
-			for (const sid of cell.stickIds) {
-				clusterSticks.add(sid);
-			}
-			
-			// Add neighbors (adjacent cells in the same cluster)
-			const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
-			for (const [dr2, dc2] of dirs) {
-				const rr = r + dr2;
-				const cc = c + dc2;
-				if (rr >= 0 && rr < board.rows && cc >= 0 && cc < board.cols && board.cells[rr][cc]) {
-					queue.push([rr, cc]);
-				}
-			}
-		}
-		
-		// Now ensure we have ALL cells of each stick in the cluster
-		// For each stick, add all its cells to visited set and expand cluster
-		const allClusterCells = new Set<string>();
-		for (const sid of clusterSticks) {
-			const placed = board.placed[sid];
-			if (!placed) continue;
-			
-			const stickDr = placed.orientation === 'V' ? 1 : 0;
-			const stickDc = placed.orientation === 'H' ? 1 : 0;
-			
-			// Add all cells of this stick
-			for (let i = 0; i < placed.text.length; i++) {
-				const r = placed.row + stickDr * i;
-				const c = placed.col + stickDc * i;
-				allClusterCells.add(`${r},${c}`);
-			}
-		}
-		
-		// Expand cluster to include all connected cells
-		const finalClusterSticks = new Set<string>(clusterSticks);
-		for (const cellKey of allClusterCells) {
-			const [r, c] = cellKey.split(',').map(Number);
-			const cell = board.cells[r]?.[c];
-			if (cell) {
-				for (const sid of cell.stickIds) {
-					finalClusterSticks.add(sid);
-				}
-			}
-		}
-		
-		// Move all sticks in cluster
-		pushHistory();
-		for (const sid of finalClusterSticks) {
-			const placed = board.placed[sid];
-			if (placed) {
-				const newRow = placed.row + dr;
-				const newCol = placed.col + dc;
-				board = moveStick(board, sid, newRow, newCol);
-			}
-		}
-	}
-	
+	// moveCluster function removed - drag functionality removed
 	function disassembleCluster(r: number, c: number) {
 		const cell = board.cells[r][c];
 		if (!cell || cell.stickIds.length === 0) return;
@@ -556,177 +460,7 @@
 		sticks = sticks.map((s) => (s.sid === ps.sid ? { ...s, orientation: rotated.orientation, placed: true } : s));
 	}
 
-	// ---- drag from bank to board (simple pointer-based)
-	let dragStartPos: { x: number; y: number; sid: string; time: number } | null = null;
-	
-	function bankPointerDown(e: MouseEvent | PointerEvent, sid: string) {
-		const s = sticks.find((x) => x.sid === sid);
-		if (!s || s.placed) return;
-		
-		// Store start position and time for drag detection
-		dragStartPos = { x: e.clientX, y: e.clientY, sid, time: Date.now() };
-	}
-
-	function bankPointerMove(e: MouseEvent | PointerEvent) {
-		// Check if we should start dragging from bank
-		if (dragStartPos && !draggingSid) {
-			const timeSinceStart = Date.now() - dragStartPos.time;
-			const moved = Math.abs(e.clientX - dragStartPos.x) > 5 || Math.abs(e.clientY - dragStartPos.y) > 5;
-			// Only start drag if moved AND enough time has passed (prevents click interference)
-			if (moved && timeSinceStart > 50) {
-				draggingSid = dragStartPos.sid;
-				dragStartPos = null;
-			}
-		}
-		
-		if (draggingSid) {
-			dragX = e.clientX;
-			dragY = e.clientY;
-
-			// find board cell under pointer
-			const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-			if (!el) {
-				dragOverCell = null;
-				dragPlacementValid = false;
-				return;
-			}
-			const rr = el.getAttribute('data-r');
-			const cc = el.getAttribute('data-c');
-			if (rr !== null && cc !== null) {
-				dragOverCell = { r: Number(rr), c: Number(cc) };
-				// Check if placement would be valid
-				const stick = sticks.find((s) => s.sid === draggingSid);
-				if (stick && !stick.placed) {
-					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c, bag.constraints.max_intersections_per_wordpair);
-					dragPlacementValid = ok.ok;
-				} else {
-					dragPlacementValid = false;
-				}
-			} else {
-				dragOverCell = null;
-				dragPlacementValid = false;
-			}
-		} else if (draggingPlacedSid) {
-			dragX = e.clientX;
-			dragY = e.clientY;
-			
-			// find board cell under pointer
-			const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-			if (!el) {
-				dragOverCell = null;
-				dragPlacementValidCluster = false;
-				return;
-			}
-			const rr = el.getAttribute('data-r');
-			const cc = el.getAttribute('data-c');
-			if (rr !== null && cc !== null && dragStartCell) {
-				dragOverCell = { r: Number(rr), c: Number(cc) };
-				// Check if cluster move would be valid
-				const placed = board.placed[draggingPlacedSid];
-				if (placed) {
-					const dr = dragOverCell.r - dragStartCell.r;
-					const dc = dragOverCell.c - dragStartCell.c;
-					const newRow = placed.row + dr;
-					const newCol = placed.col + dc;
-					
-					// For cluster, check if ALL sticks can be moved to new position
-					const startCell = board.cells[dragStartCell.r]?.[dragStartCell.c];
-					if (startCell && startCell.stickIds.length > 1) {
-						// Check each stick in cluster
-						const clusterSticks = new Set<string>();
-						const visited = new Set<string>();
-						const queue: [number, number][] = [[dragStartCell.r, dragStartCell.c]];
-						
-						while (queue.length > 0) {
-							const [r, c] = queue.shift()!;
-							const key = `${r},${c}`;
-							if (visited.has(key)) continue;
-							visited.add(key);
-							
-							const cell = board.cells[r][c];
-							if (!cell) continue;
-							
-							for (const sid of cell.stickIds) {
-								clusterSticks.add(sid);
-							}
-							
-							const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
-							for (const [dr2, dc2] of dirs) {
-								const rr = r + dr2;
-								const cc = c + dc2;
-								if (rr >= 0 && rr < board.rows && cc >= 0 && cc < board.cols && board.cells[rr][cc]) {
-									queue.push([rr, cc]);
-								}
-							}
-						}
-						
-						// Check if all sticks can move
-						let allValid = true;
-						for (const sid of clusterSticks) {
-							const p = board.placed[sid];
-							if (!p) continue;
-							const nr = p.row + dr;
-							const nc = p.col + dc;
-							const endR = nr + (p.orientation === 'V' ? p.text.length - 1 : 0);
-							const endC = nc + (p.orientation === 'H' ? p.text.length - 1 : 0);
-							if (nr < 0 || nc < 0 || endR >= board.rows || endC >= board.cols) {
-								allValid = false;
-								break;
-							}
-						}
-						dragPlacementValidCluster = allValid;
-					} else {
-						// Single stick
-						const endR = newRow + (placed.orientation === 'V' ? placed.text.length - 1 : 0);
-						const endC = newCol + (placed.orientation === 'H' ? placed.text.length - 1 : 0);
-						dragPlacementValidCluster = newRow >= 0 && newCol >= 0 && endR < board.rows && endC < board.cols;
-					}
-				} else {
-					dragPlacementValidCluster = false;
-				}
-			} else {
-				dragOverCell = null;
-				dragPlacementValidCluster = false;
-			}
-		}
-	}
-
-	function bankPointerUp(e: MouseEvent | PointerEvent) {
-		// If we were just clicking (not dragging), handle click
-		if (dragStartPos && !draggingSid) {
-			const timeSinceStart = Date.now() - dragStartPos.time;
-			// If it was a quick click (< 200ms and no movement), select the stick
-			if (timeSinceStart < 200) {
-				selectStick(dragStartPos.sid);
-			}
-			dragStartPos = null;
-			return;
-		}
-		
-		if (draggingSid) {
-			const sid = draggingSid;
-			draggingSid = null;
-
-			if (dragOverCell && dragPlacementValid) {
-				const stick = sticks.find((s) => s.sid === sid);
-				if (stick && !stick.placed) {
-					const ok = canPlaceStick(board, stick, dragOverCell.r, dragOverCell.c, bag.constraints.max_intersections_per_wordpair);
-					if (ok.ok) {
-						pushHistory();
-						board = placeStick(board, stick, dragOverCell.r, dragOverCell.c);
-						sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
-						selectedSid = null;
-					}
-				}
-			}
-			// If placement was invalid, stick stays in bank (already there)
-
-			dragOverCell = null;
-			dragPlacementValid = false;
-		}
-		
-		dragStartPos = null;
-	}
+	// All drag functions removed - using click-based placement only
 
 	// ---- submit
 	let submitResult: { ok: boolean; issues: string[]; score: number; densityPct: number; wordCount: number } | null = null;
@@ -748,38 +482,7 @@
 	}
 </script>
 
-<svelte:window
-	on:mousemove={bankPointerMove}
-	on:mouseup={(e) => {
-		bankPointerUp(e);
-		if (draggingPlacedSid) {
-			// Handle window-level mouse up for board drags
-			if (dragHoldTimer) {
-				clearTimeout(dragHoldTimer);
-				dragHoldTimer = null;
-			}
-			draggingPlacedSid = null;
-			dragStartCell = null;
-			dragOverCell = null;
-			dragPlacementValidCluster = false;
-		}
-	}}
-	on:pointermove={bankPointerMove}
-	on:pointerup={(e) => {
-		bankPointerUp(e);
-		if (draggingPlacedSid) {
-			// Handle window-level pointer up for board drags
-			if (dragHoldTimer) {
-				clearTimeout(dragHoldTimer);
-				dragHoldTimer = null;
-			}
-			draggingPlacedSid = null;
-			dragStartCell = null;
-			dragOverCell = null;
-			dragPlacementValidCluster = false;
-		}
-	}}
-/>
+<!-- Window event handlers removed - using click-based placement only -->
 
 <div class="screen" style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;">
 	<header class="top">
@@ -799,7 +502,7 @@
 
 			<div class="spacer"></div>
 
-			<button class="btnPrimary" on:click={submit} aria-label="Submit">Submit</button>
+			<button class="btnPrimary" on:click={submit} aria-label="Submit" disabled={submitDisabled}>Submit</button>
 		</div>
 
 		<!-- clue bar (fixed height, toggles between two lines of metadata) -->
@@ -825,8 +528,13 @@
 				{#each Array(10) as _, r}
 					{#each Array(10) as __, c}
 						<!-- data-r/data-c used by elementFromPoint drag placement -->
+						{@const cell = board.cells[r][c]}
+						{@const cellStickIds = cell ? cell.stickIds : []}
+						{@const cellColor = cellStickIds.length > 0 ? getStickColor(cellStickIds[0]) : 'transparent'}
+						{@const cellColor2 = cellStickIds.length > 1 ? getStickColor(cellStickIds[1]) : null}
+						{@const isInvalidWord = invalidWordCells.has(`${r},${c}`)}
 						<div
-							class="cell {board.cells[r][c] ? 'filled' : ''}"
+							class="cell {cell ? 'filled' : ''} {cellStickIds.length > 1 ? 'intersection' : ''} {isInvalidWord ? 'invalidWord' : ''}"
 							data-r={r}
 							data-c={c}
 							on:click={() => handleCellClick(r, c)}
@@ -835,65 +543,33 @@
 								handleCellDoubleClick(r, c, e);
 							}}
 							on:touchend={(e) => handleCellTouch(r, c, e)}
-							on:mousedown={(e) => {
-								// Only start drag hold timer for placed cells
-								if (e.button === 0 && board.cells[r][c]) {
-									handleCellPointerDown(r, c, e);
-								}
-							}}
-							on:mouseup={(e) => {
-								if (draggingPlacedSid) {
-									handleCellPointerUp(r, c, e);
-								}
-							}}
+							on:mouseenter={() => handleCellMouseEnter(r, c)}
+							on:mouseleave={handleCellMouseLeave}
+							style="background: {cellStickIds.length > 1 ? `linear-gradient(135deg, ${cellColor} 0%, ${cellColor} 50%, ${cellColor2} 50%, ${cellColor2} 100%)` : cellColor};"
 						>
-							{#if board.cells[r][c]}
-								<span class="letter">{board.cells[r][c]!.letter}</span>
+							{#if cell}
+								<span class="letter">{cell.letter}</span>
 							{/if}
 						</div>
 					{/each}
 				{/each}
 
-				<!-- Shadow preview for dragging stick from bank -->
-				{#if draggingSid && dragOverCell}
-					{@const draggedStick = sticks.find((s) => s.sid === draggingSid)}
-					{#if draggedStick}
-						{#each Array(draggedStick.text.length) as _, i}
-							{@const dr = draggedStick.orientation === 'V' ? 1 : 0}
-							{@const dc = draggedStick.orientation === 'H' ? 1 : 0}
-							{@const shadowR = dragOverCell.r + dr * i}
-							{@const shadowC = dragOverCell.c + dc * i}
+				<!-- Shadow preview when stick is selected and hovering over board -->
+				{#if selectedSid && hoverCell}
+					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
+					{#if selectedStick && !selectedStick.placed}
+						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
+						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
+						{@const placementCheck = canPlaceStick(board, selectedStick, hoverCell.r, hoverCell.c, bag.constraints.max_intersections_per_wordpair)}
+						{#each Array(selectedStick.text.length) as _, i}
+							{@const shadowR = hoverCell.r + dr * i}
+							{@const shadowC = hoverCell.c + dc * i}
 							{#if shadowR >= 0 && shadowR < 10 && shadowC >= 0 && shadowC < 10}
 								<div 
-									class="cell shadow {dragPlacementValid ? 'shadowValid' : 'shadowInvalid'}"
+									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
 									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
 								>
-									<span class="letter shadowLetter">{draggedStick.text[i]}</span>
-								</div>
-							{/if}
-						{/each}
-					{/if}
-				{/if}
-
-				<!-- Shadow preview for dragging placed stick/cluster -->
-				{#if draggingPlacedSid && dragOverCell && dragStartCell}
-					{@const placed = board.placed[draggingPlacedSid]}
-					{#if placed}
-						{@const dr = dragOverCell.r - dragStartCell.r}
-						{@const dc = dragOverCell.c - dragStartCell.c}
-						{@const newRow = placed.row + dr}
-						{@const newCol = placed.col + dc}
-						{#each Array(placed.text.length) as _, i}
-							{@const stickDr = placed.orientation === 'V' ? 1 : 0}
-							{@const stickDc = placed.orientation === 'H' ? 1 : 0}
-							{@const shadowR = newRow + stickDr * i}
-							{@const shadowC = newCol + stickDc * i}
-							{#if shadowR >= 0 && shadowR < 10 && shadowC >= 0 && shadowC < 10}
-								<div 
-									class="cell shadow {dragPlacementValidCluster ? 'shadowValid' : 'shadowInvalid'}"
-									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
-								>
-									<span class="letter shadowLetter">{placed.text[i]}</span>
+									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 								</div>
 							{/if}
 						{/each}
@@ -934,8 +610,6 @@
 										<li><span class="hang">Click</span> placed tiles to select stick</li>
 										<li><span class="hang">Double-click</span> placed stick to return it</li>
 										<li><span class="hang">Double-click</span> intersection to disassemble</li>
-										<li><span class="hang">Drag</span> stick from bank to board to place</li>
-										<li><span class="hang">Drag</span> placed stick to move it</li>
 										<li><span class="hang">Ctrl+Z</span> undo last action</li>
 										<li><span class="hang">Ctrl+Y</span> redo last undone action</li>
 										<li><span class="hang">R</span> rotate selected stick</li>
@@ -960,8 +634,8 @@
 				<div class="bankActions">
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations">⟷</button>
-					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⌂</button>
+					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations">{hasHorizontalSticks ? '⟷' : '⇅'}</button>
+					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⇊</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -977,25 +651,7 @@
 									selectStick(s.sid);
 								}
 							}}
-							on:mousedown={(e) => {
-								// For drag support
-								if (!s.placed && e.button === 0) {
-									bankPointerDown(e, s.sid);
-								}
-							}}
-							on:mouseup={(e) => {
-								// For drag support
-								if (!s.placed && e.button === 0) {
-									bankPointerUp(e);
-								}
-							}}
-							on:pointerdown={(e) => {
-								// For touch drag support
-								if (!s.placed) {
-									bankPointerDown(e, s.sid);
-								}
-							}}
-							style="cursor: {s.placed ? 'not-allowed' : 'pointer'};"
+							style="cursor: {s.placed ? 'not-allowed' : 'pointer'}; background: {getStickColor(s.sid)};"
 						>
 							<div class="stickTiles">
 								{#each s.text.split('') as ch}
@@ -1009,33 +665,7 @@
 		</section>
 	</main>
 
-	<!-- drag ghost -->
-	{#if draggingSid}
-		{@const draggedStick = sticks.find((s) => s.sid === draggingSid)}
-		{#if draggedStick}
-			<div class="dragGhost" style="left:{dragX}px; top:{dragY}px;">
-				<div class="stickTiles">
-					{#each draggedStick.text.split('') as ch}
-						<div class="tile">{ch}</div>
-					{/each}
-				</div>
-			</div>
-		{/if}
-	{/if}
-	
-	<!-- drag ghost for placed stick -->
-	{#if draggingPlacedSid}
-		{@const placedStick = board.placed[draggingPlacedSid]}
-		{#if placedStick}
-			<div class="dragGhost" style="left:{dragX}px; top:{dragY}px;">
-				<div class="stickTiles">
-					{#each placedStick.text.split('') as ch}
-						<div class="tile">{ch}</div>
-					{/each}
-				</div>
-			</div>
-		{/if}
-	{/if}
+	<!-- Drag ghost elements removed - using shadow preview on board instead -->
 
 	<!-- submit modal -->
 	{#if submitResult}
@@ -1303,6 +933,11 @@
 	.cell.filled {
 		background: rgba(255,255,255,0.05);
 	}
+	
+	.cell.invalidWord {
+		outline: 1px solid rgba(255, 100, 100, 0.6);
+		outline-offset: -1px;
+	}
 
 	/* Removed .cell.sel - no blue stroke around settled sticks */
 
@@ -1555,7 +1190,7 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 2px 6px; /* further reduced top/bottom padding */
+		padding: 0px 6px; /* reduced by 5px top and bottom (was 2px, now 0px) */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: none; /* allows pointer-based drag */
@@ -1661,8 +1296,8 @@
 	}
 
 	.modal {
-		width: calc(100vw - 20px); /* Match clue bar width (screen width - padding) */
-		max-width: 373px; /* Match clue bar on desktop (393px - 20px) */
+		width: min(calc(100vw - 20px), 373px); /* Match clue bar width */
+		margin: 0 auto; /* Center the modal */
 		border-radius: 18px;
 		border: 1px solid rgba(255,255,255,0.14);
 		background: rgba(10, 14, 30, 0.96);
