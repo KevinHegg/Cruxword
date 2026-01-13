@@ -35,6 +35,9 @@
 	// Board selection
 	let selectedPlacedSid: string | null = null;
 	
+	// Highlight returned stick holder
+	let highlightedSid: string | null = null;
+	
 	// Double-tap detection
 	let lastTapTime = 0;
 	let lastTapCell: { r: number; c: number } | null = null;
@@ -89,8 +92,8 @@
 			const isDesktop = vw > 768;
 			
 			// Reserve space for UI elements (more accurate for 12x12 board)
-			// Header: ~120px, Clue bar: ~40px, Bank: ~200px, Padding: ~40px
-			const reservedHeight = isDesktop ? 400 : 360;
+			// Header: ~120px, Clue bar: ~40px, Bank: ~180px (reduced), Padding: ~40px
+			const reservedHeight = isDesktop ? 400 : 320; // Reduced from 360 to make more room
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
 			// Reserve space for side padding - reduce to prevent clipping
@@ -104,14 +107,21 @@
 			if (isDesktop) {
 				boardDimension = Math.min(availableHeight, availableWidth);
 			} else {
-				// On mobile, use width to fill display, but don't exceed height
+				// On mobile, prioritize width to fill display and show all 12 tiles
+				// iPhone 17 Pro width is ~393px, so we want board to be close to that
 				boardDimension = Math.min(availableWidth, availableHeight);
+				// Ensure we can show all 12 tiles - each tile should be at least ~30px
+				const minTileSize = 30;
+				const minBoardSize = minTileSize * 12; // 360px minimum for 12 tiles
+				if (boardDimension < minBoardSize) {
+					boardDimension = Math.min(minBoardSize, availableWidth);
+				}
 			}
 			
 			// Ensure minimum size and reasonable maximum for mobile
 			// For 12x12, we need slightly larger minimums
-			const minSize = isDesktop ? 400 : 280;
-			const maxSize = isDesktop ? 700 : 600; // Increased max for iPhone 17 Pro
+			const minSize = isDesktop ? 400 : 360; // Increased to ensure 12 tiles visible
+			const maxSize = isDesktop ? 700 : 680; // Increased max for iPhone 17 Pro to show all 12 tiles clearly
 			boardSize = `${Math.max(minSize, Math.min(maxSize, boardDimension))}px`;
 		};
 		calculateBoardSize();
@@ -281,12 +291,14 @@
 	$: hasHorizontalSticks = sticks.some((s) => !s.placed && s.orientation === 'H');
 	
 	function sortSticksByLength() {
-		// Sort by length descending (5, 4, 3, 2, 1)
-		sticks = [...sticks].sort((a, b) => {
+		// Sort by length descending (5, 4, 3, 2, 1) - longest first
+		sticks = sticks.sort((a, b) => {
 			const lenA = a.text.length;
 			const lenB = b.text.length;
-			return lenB - lenA; // Descending order
+			return lenB - lenA; // Descending order (longest first)
 		});
+		// Force reactivity by reassigning
+		sticks = sticks;
 	}
 
 	// ---- placing via tap
@@ -475,10 +487,17 @@
 
 	function returnSelectedPlaced() {
 		if (!selectedPlacedSid) return;
+		const returnedSid = selectedPlacedSid;
 		pushHistory();
-		board = removeStick(board, selectedPlacedSid);
-		sticks = sticks.map((s) => (s.sid === selectedPlacedSid ? { ...s, placed: false } : s));
+		board = removeStick(board, returnedSid);
+		sticks = sticks.map((s) => (s.sid === returnedSid ? { ...s, placed: false } : s));
 		selectedPlacedSid = null;
+		
+		// Highlight the returned stick holder
+		highlightedSid = returnedSid;
+		setTimeout(() => {
+			highlightedSid = null;
+		}, 1500); // Highlight for 1.5 seconds
 	}
 
 	function rotateSelectedPlaced() {
@@ -655,7 +674,7 @@
 										<li><span class="hang">Double-tap</span> a placed stick to return it to bank</li>
 										<li><span class="hang">Double-tap</span> an intersection to disassemble cluster</li>
 										<li><span class="hang">⟷</span> button rotates all unplaced sticks</li>
-										<li><span class="hang">⇊</span> button sorts sticks by length</li>
+										<li><span class="hang">⇅</span> button sorts sticks by length (longest first)</li>
 										<li><span class="hang">Submit</span> checks legality + scores density/words</li>
 									</ul>
 								</div>
@@ -692,7 +711,7 @@
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
 					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
-					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⤴</button>
+					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length (longest first)">⇅</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -701,7 +720,7 @@
 				<div class="bankGrid">
 					{#each sticks as s (s.sid)}
 						<div
-							class="stick {s.placed ? 'ghost' : ''} {selectedSid === s.sid ? 'selected' : ''}"
+							class="stick {s.placed ? 'ghost' : ''} {selectedSid === s.sid ? 'selected' : ''} {highlightedSid === s.sid ? 'highlighted' : ''}"
 							on:click={() => {
 								// Direct click handler - always works
 								if (!s.placed) {
@@ -1019,8 +1038,8 @@
 
 	.letter {
 		font-weight: 800;
-		font-size: clamp(12px, 2.8vw, 20px);
-		letter-spacing: 0.6px;
+		font-size: clamp(14px, 3.2vw, 24px); /* Increased from 12-20px to 14-24px for better visibility */
+		letter-spacing: 0.7px;
 	}
 
 	/* Shadow preview for drag placement - rendered as grid children that overlay */
@@ -1187,11 +1206,11 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px 6px 10px; /* reduced bottom padding */
+		padding: 0 10px 4px 10px; /* further reduced bottom padding */
 		display: flex;
 		flex-direction: column;
-		min-height: 160px; /* ensure three rows visible */
-		max-height: 180px; /* allow some growth if needed */
+		min-height: 150px; /* reduced to make room for board */
+		max-height: 165px; /* reduced to make room for board */
 	}
 
 	.bankHeader {
@@ -1222,10 +1241,10 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 6px; /* reduced padding */
+		padding: 4px; /* further reduced padding */
 		flex: 1;
-		min-height: 150px; /* ensure three rows visible */
-		max-height: 170px;
+		min-height: 140px; /* reduced to make room for board */
+		max-height: 160px; /* reduced to make room for board */
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1254,9 +1273,9 @@
 		display: grid;
 		grid-auto-flow: column;
 		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
-		gap: 6px; /* reduced gap */
+		gap: 5px; /* further reduced gap */
 		align-content: start;
-		min-height: 150px; /* ensure three rows have space */
+		min-height: 140px; /* reduced to make room for board */
 	}
 
 	.stick {
@@ -1266,18 +1285,39 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 0px 6px; /* reduced by 5px top and bottom (was 2px, now 0px) */
+		padding: 2px 6px; /* reduced top/bottom padding to make room for board */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: manipulation; /* optimized for touch */
-		min-height: 22px; /* shorter height */
-		transition: opacity 0.15s ease, transform 0.15s ease;
+		min-height: 20px; /* reduced height */
+		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
 	}
 	
 	.stick:active {
 		opacity: 0.8;
 		transform: scale(0.97);
+	}
+	
+	.stick.highlighted {
+		outline: 3px solid rgba(132, 255, 160, 0.9);
+		outline-offset: 2px;
+		animation: highlightPulse 1.5s ease-out;
+	}
+	
+	@keyframes highlightPulse {
+		0% {
+			outline-width: 3px;
+			outline-color: rgba(132, 255, 160, 0.9);
+		}
+		50% {
+			outline-width: 4px;
+			outline-color: rgba(132, 255, 160, 0.7);
+		}
+		100% {
+			outline-width: 3px;
+			outline-color: rgba(132, 255, 160, 0.3);
+		}
 	}
 
 	.stick.selected {
@@ -1307,13 +1347,13 @@
 	}
 
 	.tile {
-		width: 20px;
-		height: 20px; /* one-tile tall holders */
+		width: 25px; /* increased from 20px (+5px) */
+		height: 25px; /* increased from 20px (+5px) */
 		border-radius: 6px;
 		display: grid;
 		place-items: center;
 		font-weight: 900;
-		font-size: 12px;
+		font-size: 13px; /* slightly larger font */
 		background: rgba(255,255,255,0.08);
 		border: 1px solid rgba(255,255,255,0.10);
 	}
