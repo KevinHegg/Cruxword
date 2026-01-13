@@ -29,7 +29,8 @@
 	let redoHistory: BoardState[] = [];
 
 	// Shadow preview state (when stick is selected)
-	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over
+	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over (mouse)
+	let touchCell: { r: number; c: number } | null = null; // cell being touched (touch screens)
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
@@ -92,18 +93,25 @@
 			const reservedHeight = isDesktop ? 400 : 360;
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
-			// Reserve space for side padding
-			const reservedWidth = isDesktop ? 60 : 20;
+			// Reserve space for side padding - reduce to prevent clipping
+			const reservedWidth = isDesktop ? 40 : 10; // Reduced padding to prevent clipping
 			const availableWidth = Math.max(0, vw - reservedWidth);
 			
 			// Size board to fill available vertical space (height-based, as requested)
 			// Board is square, so use the smaller of available height or width
-			const boardDimension = Math.min(availableHeight, availableWidth);
+			// But prioritize filling the width on mobile to prevent clipping
+			let boardDimension: number;
+			if (isDesktop) {
+				boardDimension = Math.min(availableHeight, availableWidth);
+			} else {
+				// On mobile, use width to fill display, but don't exceed height
+				boardDimension = Math.min(availableWidth, availableHeight);
+			}
 			
 			// Ensure minimum size and reasonable maximum for mobile
 			// For 12x12, we need slightly larger minimums
-			const minSize = isDesktop ? 400 : 300;
-			const maxSize = isDesktop ? 650 : 500;
+			const minSize = isDesktop ? 400 : 280;
+			const maxSize = isDesktop ? 700 : 600; // Increased max for iPhone 17 Pro
 			boardSize = `${Math.max(minSize, Math.min(maxSize, boardDimension))}px`;
 		};
 		calculateBoardSize();
@@ -213,7 +221,7 @@
 		redoHistory = [];
 		selectedSid = null;
 		selectedPlacedSid = null;
-		showCheat = true;
+		showCheat = false; // Don't show quickstart on reset
 		showClue = true;
 	}
 
@@ -282,13 +290,13 @@
 	}
 
 	// ---- placing via tap
-	function tapPlace(r: number, c: number) {
-		if (!selectedSid) return;
+	function tapPlace(r: number, c: number): boolean {
+		if (!selectedSid) return false;
 		const stick = sticks.find((s) => s.sid === selectedSid);
-		if (!stick || stick.placed) return;
+		if (!stick || stick.placed) return false;
 		
 		// Bounds check
-		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return;
+		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return false;
 
 		// Calculate placement position: clicked tile is where FIRST letter goes
 		// For horizontal: first letter at (r, c), rest extends right
@@ -297,7 +305,7 @@
 		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
 		if (!ok.ok) {
 			// Silently fail - user will see invalid shadow preview
-			return;
+			return false;
 		}
 
 		pushHistory();
@@ -305,6 +313,7 @@
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
 		hoverCell = null; // Clear hover on placement
+		return true;
 	}
 
 	// ---- board stick selection + move/return
@@ -323,11 +332,17 @@
 	}
 	
 	function handleCellClick(r: number, c: number) {
-		// Handle click: select or place
+		// Handle click: if stick is selected, try to place first (even on settled sticks)
+		// If no stick selected or placement fails, then select the cell's stick
+		if (selectedSid) {
+			// Try to place the selected stick
+			const placed = tapPlace(r, c);
+			// If placement succeeded, we're done. If not, fall through to select.
+			if (placed) return;
+		}
+		// If cell has content, select its stick
 		if (board.cells[r][c]) {
 			tapCellSelect(r, c);
-		} else {
-			tapPlace(r, c);
 		}
 	}
 	
@@ -357,9 +372,22 @@
 		}
 	}
 	
-	function handleCellTouch(r: number, c: number, e: TouchEvent) {
+	function handleCellTouchStart(r: number, c: number, e: TouchEvent) {
 		e.preventDefault();
 		e.stopPropagation();
+		
+		// Track touch position for shadow preview
+		if (selectedSid) {
+			touchCell = { r, c };
+		}
+	}
+	
+	function handleCellTouchEnd(r: number, c: number, e: TouchEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		
+		// Clear touch tracking
+		touchCell = null;
 		
 		// For touch events, use double-tap detection
 		const now = Date.now();
@@ -383,15 +411,24 @@
 			lastTapTime = 0;
 			lastTapCell = null;
 		} else {
-			// Single tap: select or place
-			lastTapTime = now;
-			lastTapCell = { r, c };
+			// Single tap: if stick selected, try to place first (even on settled sticks)
+			// If no stick selected or placement fails, then select the cell's stick
+			if (selectedSid) {
+				const placed = tapPlace(r, c);
+				if (placed) {
+					lastTapTime = 0;
+					lastTapCell = null;
+					return;
+				}
+			}
 			
+			// If cell has content, select its stick
 			if (board.cells[r][c]) {
 				tapCellSelect(r, c);
-			} else {
-				tapPlace(r, c);
 			}
+			
+			lastTapTime = now;
+			lastTapCell = { r, c };
 		}
 	}
 	
@@ -472,6 +509,19 @@
 	let submitResult: { ok: boolean; issues: string[]; score: number; densityPct: number; wordCount: number } | null = null;
 
 	function submit() {
+		// Always allow submit to show validation results, even if not valid
+		if (!dictionaryLoaded) {
+			// Show a message that dictionary is still loading
+			submitResult = {
+				ok: false,
+				issues: ['Dictionary is still loading. Please wait a moment and try again.'],
+				score: 0,
+				densityPct: 0,
+				wordCount: 0
+			};
+			return;
+		}
+		
 		const res = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
 
 		submitResult = {
@@ -508,7 +558,7 @@
 
 			<div class="spacer"></div>
 
-			<button class="btnPrimary" on:click={submit} aria-label="Submit" disabled={submitDisabled}>Submit</button>
+			<button class="btnPrimary" on:click={submit} aria-label="Submit" class:disabled={submitDisabled || !dictionaryLoaded} title={submitDisabled || !dictionaryLoaded ? 'Complete the puzzle to submit' : 'Submit your solution'}>Submit</button>
 		</div>
 
 		<!-- clue bar (fixed height, toggles between two lines of metadata) -->
@@ -548,7 +598,8 @@
 								e.stopPropagation();
 								handleCellDoubleClick(r, c, e);
 							}}
-							on:touchend={(e) => handleCellTouch(r, c, e)}
+							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
+							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
 							on:mouseleave={handleCellMouseLeave}
 							style="background: {cellStickIds.length > 1 ? `linear-gradient(135deg, ${cellColor} 0%, ${cellColor} 50%, ${cellColor2} 50%, ${cellColor2} 100%)` : cellColor};"
@@ -560,16 +611,17 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected and hovering over board -->
-				{#if selectedSid && hoverCell}
+				<!-- Shadow preview when stick is selected and hovering/touching over board -->
+				{#if selectedSid && (hoverCell || touchCell)}
+					{@const previewCell = hoverCell || touchCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
-					{#if selectedStick && !selectedStick.placed}
+					{#if selectedStick && !selectedStick.placed && previewCell}
 						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
 						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
-						{@const placementCheck = canPlaceStick(board, selectedStick, hoverCell.r, hoverCell.c, bag.constraints.max_intersections_per_wordpair)}
+						{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
 						{#each Array(selectedStick.text.length) as _, i}
-							{@const shadowR = hoverCell.r + dr * i}
-							{@const shadowC = hoverCell.c + dc * i}
+							{@const shadowR = previewCell.r + dr * i}
+							{@const shadowC = previewCell.c + dc * i}
 							{#if shadowR >= 0 && shadowR < 12 && shadowC >= 0 && shadowC < 12}
 								<div 
 									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
@@ -639,8 +691,8 @@
 				<div class="bankActions">
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations">{hasHorizontalSticks ? '⟷' : '⇅'}</button>
-					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⇊</button>
+					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
+					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length">⤴</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -823,6 +875,16 @@
 		transform: translateY(0);
 		opacity: 0.8;
 	}
+	
+	.btnPrimary.disabled, .btnPrimary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	
+	.btnPrimary.disabled:hover, .btnPrimary:disabled:hover {
+		transform: none;
+		opacity: 0.5;
+	}
 
 	.iconBtn {
 		width: 34px;
@@ -891,10 +953,12 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		padding: 0 10px;
+		padding: 0;
 		align-items: center;
 		justify-content: flex-start;
 		margin: 0 auto;
+		width: 100%;
+		overflow: visible; /* Allow board to extend to edges */
 	}
 
 	.board {
