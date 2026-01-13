@@ -97,7 +97,8 @@
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
 			// Reserve space for side padding - reduce to prevent clipping
-			const reservedWidth = isDesktop ? 40 : 10; // Reduced padding to prevent clipping
+			// On desktop (no-touch), make canvas wider
+			const reservedWidth = isDesktop ? 20 : 5; // Further reduced to prevent clipping, wider on desktop
 			const availableWidth = Math.max(0, vw - reservedWidth);
 			
 			// Size board to fill available vertical space (height-based, as requested)
@@ -105,7 +106,8 @@
 			// But prioritize filling the width on mobile to prevent clipping
 			let boardDimension: number;
 			if (isDesktop) {
-				boardDimension = Math.min(availableHeight, availableWidth);
+				// On desktop (no-touch), use more of the width for a bigger board
+				boardDimension = Math.min(availableHeight, availableWidth * 0.95); // Use 95% of width
 			} else {
 				// On mobile, prioritize width to fill display and show all 12 tiles
 				// iPhone 17 Pro width is ~393px, so we want board to be close to that
@@ -120,8 +122,8 @@
 			
 			// Ensure minimum size and reasonable maximum for mobile
 			// For 12x12, we need slightly larger minimums
-			const minSize = isDesktop ? 400 : 360; // Increased to ensure 12 tiles visible
-			const maxSize = isDesktop ? 700 : 680; // Increased max for iPhone 17 Pro to show all 12 tiles clearly
+			const minSize = isDesktop ? 450 : 360; // Increased desktop min for bigger board
+			const maxSize = isDesktop ? 800 : 680; // Increased desktop max for bigger board, mobile stays at 680
 			boardSize = `${Math.max(minSize, Math.min(maxSize, boardDimension))}px`;
 		};
 		calculateBoardSize();
@@ -292,13 +294,13 @@
 	
 	function sortSticksByLength() {
 		// Sort by length descending (5, 4, 3, 2, 1) - longest first
-		sticks = sticks.sort((a, b) => {
+		const sorted = [...sticks].sort((a, b) => {
 			const lenA = a.text.length;
 			const lenB = b.text.length;
 			return lenB - lenA; // Descending order (longest first)
 		});
-		// Force reactivity by reassigning
-		sticks = sticks;
+		// Force reactivity by creating new array
+		sticks = sorted;
 	}
 
 	// ---- placing via tap
@@ -343,7 +345,13 @@
 		selectedSid = null;
 	}
 	
-	function handleCellClick(r: number, c: number) {
+	function handleCellClick(r: number, c: number, e?: MouseEvent) {
+		// Prevent default to avoid text selection
+		if (e) {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+		
 		// Handle click: if stick is selected, try to place first (even on settled sticks)
 		// If no stick selected or placement fails, then select the cell's stick
 		if (selectedSid) {
@@ -612,7 +620,11 @@
 							class="cell {cell ? 'filled' : ''} {cellStickIds.length > 1 ? 'intersection' : ''} {isInvalidWord ? 'invalidWord' : ''}"
 							data-r={r}
 							data-c={c}
-							on:click={() => handleCellClick(r, c)}
+							on:click={(e) => handleCellClick(r, c, e)}
+							on:mousedown={(e) => {
+								// Prevent text selection on click
+								e.preventDefault();
+							}}
 							on:dblclick={(e) => {
 								e.stopPropagation();
 								handleCellDoubleClick(r, c, e);
@@ -706,11 +718,11 @@
 		<!-- Bank: 2-row horizontal scrolling -->
 		<section class="bank">
 			<div class="bankHeader">
-				<div class="bankLabel">Morphemes</div>
+				<div class="bankLabel" oncontextmenu={(e) => e.preventDefault()} onselectstart={(e) => e.preventDefault()}>Morphemes</div>
 				<div class="bankActions">
 					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
+					<button class="iconBtn rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
 					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length (longest first)">⇅</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
@@ -966,6 +978,9 @@
 		overflow-x: hidden;
 		padding: 0;
 		min-height: 0;
+		/* Prevent clipping on right and bottom */
+		padding-right: 0;
+		padding-bottom: 0;
 	}
 
 	.boardWrap {
@@ -978,6 +993,9 @@
 		margin: 0 auto;
 		width: 100%;
 		overflow: visible; /* Allow board to extend to edges */
+		/* Prevent clipping on right and bottom */
+		padding-right: 0;
+		padding-bottom: 0;
 	}
 
 	.board {
@@ -988,7 +1006,7 @@
 		grid-template-rows: repeat(12, 1fr);
 		gap: 0; /* no padding between cells */
 		border-radius: 16px;
-		overflow: hidden; /* clip shadows that go outside */
+		overflow: visible; /* Changed from hidden to visible to prevent clipping */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -997,6 +1015,8 @@
 		margin: 0 auto;
 		flex-shrink: 0; /* prevent resizing */
 		/* Size is set inline via style attribute, calculated once on mount */
+		/* Ensure board doesn't get clipped */
+		box-sizing: border-box;
 	}
 
 	/* subtle grid lines */
@@ -1074,6 +1094,12 @@
 		width: 32px;
 		padding: 5px 0;
 		font-size: 14px;
+	}
+	
+	.rotateBtn {
+		font-weight: 900; /* Thicker stroke for rotate icon */
+		text-stroke: 0.5px currentColor;
+		-webkit-text-stroke: 0.5px currentColor;
 	}
 
 	.cheat {
@@ -1232,6 +1258,11 @@
 		font-weight: 800;
 		opacity: 0.95;
 		font-size: 13px;
+		user-select: none;
+		-webkit-user-select: none;
+		-moz-user-select: none;
+		-ms-user-select: none;
+		cursor: default;
 	}
 
 	.bankScroller {
