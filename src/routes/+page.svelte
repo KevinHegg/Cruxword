@@ -1143,7 +1143,6 @@
 	
 	.thickStroke {
 		font-weight: 900; /* Thicker stroke for icons */
-		text-stroke: 0.5px currentColor;
 		-webkit-text-stroke: 0.5px currentColor;
 	}
 
