@@ -39,7 +39,8 @@ export function validateBagShape(bag: MorphemeBag): string[] {
 	}
 
 	// We'll only warn (not block) if you tweak later
-	const want: Record<number, number> = { 5: 5, 4: 6, 3: 7, 2: 8, 1: 9 };
+	// Updated counts after adding more sticks: 1x 4-letter, 2x 3-letter, 2x 2-letter per bag
+	const want: Record<number, number> = { 5: 5, 4: 7, 3: 9, 2: 10, 1: 9 };
 	for (const k of Object.keys(want).map(Number)) {
 		if ((counts.get(k) ?? 0) !== want[k]) {
 			issues.push(

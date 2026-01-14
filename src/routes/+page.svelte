@@ -31,6 +31,7 @@
 	// Shadow preview state (when stick is selected)
 	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over (mouse)
 	let touchCell: { r: number; c: number } | null = null; // cell being touched (touch screens)
+	let lastHoverCell: { r: number; c: number } | null = null; // last cell that showed shadow (to prevent flicker)
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
@@ -325,6 +326,7 @@
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
 		hoverCell = null; // Clear hover on placement
+		lastHoverCell = null;
 		return true;
 	}
 
@@ -365,14 +367,19 @@
 	}
 	
 	function handleCellMouseEnter(r: number, c: number) {
-		// Track hover for shadow preview
+		// Track hover for shadow preview - only update if cell changed (prevents flicker)
 		if (selectedSid) {
-			hoverCell = { r, c };
+			// Only update if moving to a different cell
+			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
+				hoverCell = { r, c };
+				lastHoverCell = { r, c };
+			}
 		}
 	}
 	
 	function handleCellMouseLeave() {
 		hoverCell = null;
+		lastHoverCell = null;
 	}
 	
 	function handleCellDoubleClick(r: number, c: number, e: MouseEvent) {
@@ -590,7 +597,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.02 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.03 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -842,7 +849,7 @@
 		color: #e9ecff;
 		font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
 		overscroll-behavior: none;
-		overflow-x: hidden;
+		overflow-x: visible; /* Changed from hidden to visible to prevent board clipping */
 		height: 100vh;
 		height: 100dvh;
 	}
@@ -1279,8 +1286,16 @@
 		padding: 0 10px 4px 10px; /* further reduced bottom padding */
 		display: flex;
 		flex-direction: column;
-		min-height: 150px; /* reduced to make room for board */
-		max-height: 165px; /* reduced to make room for board */
+		min-height: 160px; /* Increased to show more rows on mobile */
+		max-height: 180px; /* Increased to show more rows on mobile */
+	}
+	
+	/* On mobile, ensure bank is tall enough to show multiple rows */
+	@media (max-width: 768px) {
+		.bank {
+			min-height: 180px;
+			max-height: 200px;
+		}
 	}
 
 	.bankHeader {
@@ -1318,8 +1333,8 @@
 		background: rgba(255,255,255,0.04);
 		padding: 4px; /* further reduced padding */
 		flex: 1;
-		min-height: 140px; /* reduced to make room for board */
-		max-height: 160px; /* reduced to make room for board */
+		min-height: 160px; /* Increased to show more rows on mobile */
+		max-height: 180px; /* Increased to show more rows on mobile */
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1350,7 +1365,14 @@
 		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
 		gap: 5px; /* further reduced gap */
 		align-content: start;
-		min-height: 140px; /* reduced to make room for board */
+		min-height: 160px; /* Increased to show more rows on mobile */
+	}
+	
+	/* On mobile, ensure grid shows multiple rows */
+	@media (max-width: 768px) {
+		.bankGrid {
+			min-height: 180px;
+		}
 	}
 
 	.stick {
