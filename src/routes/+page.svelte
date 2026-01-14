@@ -762,7 +762,7 @@
 		<!-- Bank: 2-row horizontal scrolling -->
 		<section class="bank">
 			<div class="bankHeader">
-				<div class="bankLabel" on:contextmenu={(e) => e.preventDefault()} on:selectstart={(e) => e.preventDefault()}>Morphemes</div>
+				<div class="bankLabel" on:contextmenu={(e) => e.preventDefault()}>Morphemes</div>
 				<div class="bankActions">
 					<button class="iconBtn thickStroke" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
 					<button class="iconBtn thickStroke" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
