@@ -13,8 +13,8 @@ export function bagToSticks(bag: MorphemeBag): Stick[] {
 export function validateBagShape(bag: MorphemeBag): string[] {
 	const issues: string[] = [];
 
-	if (bag.constraints.grid.rows !== 12 || bag.constraints.grid.cols !== 12) {
-		issues.push(`Bag ${bag.meta.id}: grid must be 12×12.`);
+	if (bag.constraints.grid.rows !== 11 || bag.constraints.grid.cols !== 12) {
+		issues.push(`Bag ${bag.meta.id}: grid must be 12×11.`);
 	}
 	for (const s of bag.sticks) {
 		const t = s.text ?? '';

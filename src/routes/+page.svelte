@@ -10,7 +10,7 @@
 	let bag: MorphemeBag = pickRandomBag();
 	let bagIssues: string[] = [];
 	let sticks: Stick[] = [];
-	let board: BoardState = createEmptyBoard(12, 12);
+	let board: BoardState = createEmptyBoard(12, 11);
 
 	let selectedSid: string | null = null;
 	let showCheat = true;
@@ -45,7 +45,7 @@
 
 	// UI computed
 	$: filledCells = countFilled(board);
-	$: densityPct = Math.round((filledCells / 144) * 100);
+	$: densityPct = Math.round((filledCells / 132) * 100);
 	$: remainingCount = sticks.filter((s) => !s.placed).length;
 
 	$: selectedStick = selectedSid ? sticks.find((s) => s.sid === selectedSid) ?? null : null;
@@ -91,40 +91,44 @@
 			const vh = window.innerHeight;
 			const isDesktop = vw > 768;
 			
-			// Reserve space for UI elements (more accurate for 12x12 board)
+			// Reserve space for UI elements (12x11 board)
 			// Header: ~120px, Clue bar: ~40px, Bank: ~180px (reduced), Padding: ~40px
-			const reservedHeight = isDesktop ? 400 : 320; // Reduced from 360 to make more room
+			const reservedHeight = isDesktop ? 400 : 320;
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
 			// Reserve space for side padding - reduce to prevent clipping
 			// On desktop (no-touch), make canvas wider
-			const reservedWidth = isDesktop ? 20 : 5; // Further reduced to prevent clipping, wider on desktop
+			const reservedWidth = isDesktop ? 20 : 5;
 			const availableWidth = Math.max(0, vw - reservedWidth);
 			
-			// Size board to fill available vertical space (height-based, as requested)
-			// Board is square, so use the smaller of available height or width
-			// But prioritize filling the width on mobile to prevent clipping
-			let boardDimension: number;
+			// Board is 12 wide by 11 tall (aspect ratio 12:11)
+			// Calculate size based on width first (since board is wider than tall)
+			// Then ensure height fits
+			let boardWidth: number;
+			let boardHeight: number;
+			
 			if (isDesktop) {
-				// On desktop (no-touch), use more of the width for a bigger board
-				boardDimension = Math.min(availableHeight, availableWidth * 0.95); // Use 95% of width
+				// On desktop, use more width for bigger board
+				boardWidth = Math.min(availableWidth * 0.95, availableHeight * (12/11) * 0.95);
+				boardHeight = boardWidth * (11/12); // Height based on aspect ratio
 			} else {
-				// On mobile, prioritize width to fill display and show all 12 tiles
-				// iPhone 17 Pro width is ~393px, so we want board to be close to that
-				boardDimension = Math.min(availableWidth, availableHeight);
-				// Ensure we can show all 12 tiles - each tile should be at least ~30px
-				const minTileSize = 30;
-				const minBoardSize = minTileSize * 12; // 360px minimum for 12 tiles
-				if (boardDimension < minBoardSize) {
-					boardDimension = Math.min(minBoardSize, availableWidth);
-				}
+				// On mobile, use available width, but ensure height fits
+				boardWidth = Math.min(availableWidth, availableHeight * (12/11));
+				boardHeight = boardWidth * (11/12);
 			}
 			
-			// Ensure minimum size and reasonable maximum for mobile
-			// For 12x12, we need slightly larger minimums
-			const minSize = isDesktop ? 450 : 360; // Increased desktop min for bigger board
-			const maxSize = isDesktop ? 800 : 680; // Increased desktop max for bigger board, mobile stays at 680
-			boardSize = `${Math.max(minSize, Math.min(maxSize, boardDimension))}px`;
+			// Ensure minimum size - board should be at least wide enough for 12 tiles
+			const minTileSize = 28;
+			const minBoardWidth = minTileSize * 12; // 336px minimum width
+			if (boardWidth < minBoardWidth) {
+				boardWidth = Math.min(minBoardWidth, availableWidth);
+				boardHeight = boardWidth * (11/12);
+			}
+			
+			// Use width for sizing (board is wider than tall)
+			const maxBoardWidth = isDesktop ? 850 : 680;
+			boardWidth = Math.max(minBoardWidth, Math.min(maxBoardWidth, boardWidth));
+			boardSize = `${boardWidth}px`; // Height calculated automatically via CSS aspect-ratio
 		};
 		calculateBoardSize();
 		
@@ -228,7 +232,7 @@
 			return lenB - lenA; // Descending order
 		});
 		sticks = newSticks;
-		board = createEmptyBoard(12, 12);
+		board = createEmptyBoard(12, 11);
 		history = [];
 		redoHistory = [];
 		selectedSid = null;
@@ -293,14 +297,8 @@
 	$: hasHorizontalSticks = sticks.some((s) => !s.placed && s.orientation === 'H');
 	
 	function sortSticksByLength() {
-		// Sort by length descending (5, 4, 3, 2, 1) - longest first
-		const sorted = [...sticks].sort((a, b) => {
-			const lenA = a.text.length;
-			const lenB = b.text.length;
-			return lenB - lenA; // Descending order (longest first)
-		});
-		// Force reactivity by creating new array
-		sticks = sorted;
+		// Reverse sticks around vertical axis (mirror horizontally - reverse array order)
+		sticks = [...sticks].reverse();
 	}
 
 	// ---- placing via tap
@@ -397,6 +395,16 @@
 		e.stopPropagation();
 		
 		// Track touch position for shadow preview
+		if (selectedSid) {
+			touchCell = { r, c };
+		}
+	}
+	
+	function handleCellTouchMove(r: number, c: number, e: TouchEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		
+		// Update touch position while moving finger
 		if (selectedSid) {
 			touchCell = { r, c };
 		}
@@ -579,7 +587,7 @@
 		</div>
 
 		<div class="statsRow">
-			<div class="stat">Tiles {filledCells}/144</div>
+			<div class="stat">Tiles {filledCells}/132</div>
 			<div class="stat">Density {densityPct}%</div>
 			<div class="stat">Bag {remainingCount} left</div>
 
@@ -607,8 +615,8 @@
 	<main class="main">
 		<!-- Board wrapper ensures no horizontal cutoff on iPhone -->
 		<div class="boardWrap">
-			<div class="board" style="--rows: 12; --cols: 12; width: {boardSize}; height: {boardSize};" aria-label="12 by 12 board">
-				{#each Array(12) as _, r}
+			<div class="board" style="--rows: 11; --cols: 12; width: {boardSize};" aria-label="12 by 11 board">
+				{#each Array(11) as _, r}
 					{#each Array(12) as __, c}
 						<!-- data-r/data-c used by elementFromPoint drag placement -->
 						{@const cell = board.cells[r][c]}
@@ -630,6 +638,7 @@
 								handleCellDoubleClick(r, c, e);
 							}}
 							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
+							on:touchmove={(e) => handleCellTouchMove(r, c, e)}
 							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
 							on:mouseleave={handleCellMouseLeave}
@@ -642,7 +651,7 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected and hovering/touching over board -->
+				<!-- Shadow preview when stick is selected and hovering/touching over board - only show when valid -->
 				{#if selectedSid && (hoverCell || touchCell)}
 					{@const previewCell = hoverCell || touchCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
@@ -650,18 +659,20 @@
 						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
 						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
 						{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
-						{#each Array(selectedStick.text.length) as _, i}
-							{@const shadowR = previewCell.r + dr * i}
-							{@const shadowC = previewCell.c + dc * i}
-							{#if shadowR >= 0 && shadowR < 12 && shadowC >= 0 && shadowC < 12}
-								<div 
-									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
-									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
-								>
-									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
-								</div>
-							{/if}
-						{/each}
+						{#if placementCheck.ok}
+							{#each Array(selectedStick.text.length) as _, i}
+								{@const shadowR = previewCell.r + dr * i}
+								{@const shadowC = previewCell.c + dc * i}
+								{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+									<div 
+										class="cell shadow shadowValid"
+										style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+									>
+										<span class="letter shadowLetter">{selectedStick.text[i]}</span>
+									</div>
+								{/if}
+							{/each}
+						{/if}
 					{/if}
 				{/if}
 
@@ -1000,10 +1011,10 @@
 
 	.board {
 		position: relative;
-		aspect-ratio: 1 / 1; /* square board */
+		aspect-ratio: 12 / 11; /* 12 wide by 11 tall board */
 		display: grid;
 		grid-template-columns: repeat(12, 1fr);
-		grid-template-rows: repeat(12, 1fr);
+		grid-template-rows: repeat(11, 1fr);
 		gap: 0; /* no padding between cells */
 		border-radius: 16px;
 		overflow: visible; /* Changed from hidden to visible to prevent clipping */
@@ -1096,8 +1107,8 @@
 		font-size: 14px;
 	}
 	
-	.rotateBtn {
-		font-weight: 900; /* Thicker stroke for rotate icon */
+	.thickStroke {
+		font-weight: 900; /* Thicker stroke for icons */
 		text-stroke: 0.5px currentColor;
 		-webkit-text-stroke: 0.5px currentColor;
 	}

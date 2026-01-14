@@ -17,7 +17,7 @@ export type BagMeta = {
 };
 
 export type BagConstraints = {
-	grid: { rows: 12; cols: 12 };
+	grid: { rows: 11; cols: 12 };
 	min_word_len: number; // 3
 	submit_requires_single_cluster: boolean;
 	max_intersections_per_wordpair: number; // 1

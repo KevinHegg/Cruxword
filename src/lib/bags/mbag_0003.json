@@ -8,7 +8,7 @@
     "answer_index": 5
   },
   "constraints": {
-    "grid": { "rows": 12, "cols": 12 },
+    "grid": { "rows": 11, "cols": 12 },
     "min_word_len": 3,
     "submit_requires_single_cluster": true,
     "max_intersections_per_wordpair": 1
@@ -26,6 +26,7 @@
     { "sid": "s4_04", "text": "HUSH" },
     { "sid": "s4_05", "text": "RACK" },
     { "sid": "s4_06", "text": "CLUE" },
+    { "sid": "s4_07", "text": "TEXT" },
 
     { "sid": "s3_01", "text": "ARC" },
     { "sid": "s3_02", "text": "KEY" },
@@ -34,6 +35,8 @@
     { "sid": "s3_05", "text": "MAP" },
     { "sid": "s3_06", "text": "LED" },
     { "sid": "s3_07", "text": "RIM" },
+    { "sid": "s3_08", "text": "TAB" },
+    { "sid": "s3_09", "text": "END" },
 
     { "sid": "s2_01", "text": "ED" },
     { "sid": "s2_02", "text": "ER" },
@@ -43,6 +46,8 @@
     { "sid": "s2_06", "text": "ON" },
     { "sid": "s2_07", "text": "AT" },
     { "sid": "s2_08", "text": "UP" },
+    { "sid": "s2_09", "text": "OF" },
+    { "sid": "s2_10", "text": "TO" },
 
     { "sid": "s1_01", "text": "S" },
     { "sid": "s1_02", "text": "E" },
