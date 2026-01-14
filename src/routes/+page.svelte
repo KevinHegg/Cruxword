@@ -94,12 +94,12 @@
 			
 			// Reserve space for UI elements (12x11 board)
 			// Header: ~120px, Clue bar: ~40px, Bank: ~180px (reduced), Padding: ~40px
-			const reservedHeight = isDesktop ? 400 : 320;
+			const reservedHeight = isDesktop ? 400 : 280; // Reduced for mobile to show more morphemes
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
 			// Reserve space for side padding - reduce to prevent clipping
 			// On desktop (no-touch), make canvas wider
-			const reservedWidth = isDesktop ? 20 : 5;
+			const reservedWidth = isDesktop ? 10 : 0; // Further reduced to prevent clipping
 			const availableWidth = Math.max(0, vw - reservedWidth);
 			
 			// Board is 12 wide by 11 tall (aspect ratio 12:11)
