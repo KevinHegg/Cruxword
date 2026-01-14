@@ -590,7 +590,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.01 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.02 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
