@@ -404,9 +404,20 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Update touch position while moving finger
-		if (selectedSid) {
-			touchCell = { r, c };
+		// Update touch position while moving finger - use elementFromPoint to find current cell
+		if (selectedSid && e.touches.length > 0) {
+			const touch = e.touches[0];
+			const element = document.elementFromPoint(touch.clientX, touch.clientY);
+			if (element) {
+				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+				if (cellEl) {
+					const newR = parseInt(cellEl.dataset.r || '0');
+					const newC = parseInt(cellEl.dataset.c || '0');
+					if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
+						touchCell = { r: newR, c: newC };
+					}
+				}
+			}
 		}
 	}
 	
@@ -697,7 +708,7 @@
 										<li><span class="hang">Double-tap</span> a placed stick to return it to bank</li>
 										<li><span class="hang">Double-tap</span> an intersection to disassemble cluster</li>
 										<li><span class="hang">⟷</span> button rotates all unplaced sticks</li>
-										<li><span class="hang">⇅</span> button sorts sticks by length (longest first)</li>
+										<li><span class="hang">⇅</span> button reverses stick order (mirror horizontally)</li>
 										<li><span class="hang">Submit</span> checks legality + scores density/words</li>
 									</ul>
 								</div>
@@ -731,10 +742,10 @@
 			<div class="bankHeader">
 				<div class="bankLabel" oncontextmenu={(e) => e.preventDefault()} onselectstart={(e) => e.preventDefault()}>Morphemes</div>
 				<div class="bankActions">
-					<button class="iconBtn" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-					<button class="iconBtn" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
-					<button class="iconBtn" on:click={sortSticksByLength} title="Sort sticks by length (longest first)">⇅</button>
+					<button class="iconBtn thickStroke" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+					<button class="iconBtn thickStroke" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
+					<button class="iconBtn thickStroke rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
+					<button class="iconBtn thickStroke" on:click={sortSticksByLength} title="Reverse stick order (mirror horizontally)">⇅</button>
 					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
@@ -986,7 +997,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow-y: auto;
-		overflow-x: hidden;
+		overflow-x: visible; /* Changed from hidden to visible to prevent right-side clipping */
 		padding: 0;
 		min-height: 0;
 		/* Prevent clipping on right and bottom */
