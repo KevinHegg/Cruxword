@@ -590,7 +590,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">({bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.01 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -852,7 +852,7 @@
 		width: 100%;
 		margin: 0 auto;
 		touch-action: manipulation; /* helps prevent double-tap zoom */
-		overflow-x: hidden; /* prevent horizontal scroll */
+		overflow-x: visible; /* Changed from hidden to visible to prevent board clipping */
 		height: 100vh;
 		height: 100dvh; /* dynamic viewport height for mobile */
 		display: flex;
