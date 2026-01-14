@@ -626,7 +626,29 @@
 	<main class="main">
 		<!-- Board wrapper ensures no horizontal cutoff on iPhone -->
 		<div class="boardWrap">
-			<div class="board" style="--rows: 11; --cols: 12; width: {boardSize};" aria-label="12 by 11 board">
+			<div 
+				class="board" 
+				style="--rows: 11; --cols: 12; width: {boardSize};" 
+				aria-label="12 by 11 board"
+				on:touchmove={(e) => {
+					// Handle touchmove on board to track finger movement across cells
+					if (selectedSid && e.touches.length > 0) {
+						e.preventDefault();
+						const touch = e.touches[0];
+						const element = document.elementFromPoint(touch.clientX, touch.clientY);
+						if (element) {
+							const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+							if (cellEl) {
+								const r = parseInt(cellEl.dataset.r || '0');
+								const c = parseInt(cellEl.dataset.c || '0');
+								if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
+									touchCell = { r, c };
+								}
+							}
+						}
+					}
+				}}
+			>
 				{#each Array(11) as _, r}
 					{#each Array(12) as __, c}
 						<!-- data-r/data-c used by elementFromPoint drag placement -->
@@ -1064,8 +1086,9 @@
 	}
 
 	/* remove outer extra lines look */
-	.cell:nth-child(12n) { border-right: none; }
-	.board > .cell:nth-last-child(-n + 12) { border-bottom: none; }
+	/* Remove outer borders for 12x11 board */
+	.cell:nth-child(12n) { border-right: none; } /* Remove right border on last column */
+	.board > .cell:nth-child(n + 121) { border-bottom: none; } /* Remove bottom border on last row (11 rows * 12 cols = 132 cells, last row starts at cell 121) */
 
 	.cell.filled {
 		background: rgba(255,255,255,0.05);
