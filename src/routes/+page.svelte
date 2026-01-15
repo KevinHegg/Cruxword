@@ -17,7 +17,7 @@
 	let showClue = true;
 	let showClueDetails = false; // toggle between question and metadata
 	
-	// Fixed board size (calculated once on mount)
+	// Responsive board size (recalculated on resize)
 	let boardSize = 'min(calc(100vw - 40px), calc(100vh - 420px))';
 	
 	// Dictionary for word validation
@@ -49,6 +49,21 @@
 	let lastTapTime = 0;
 	let lastTapCell: { r: number; c: number } | null = null;
 	const DOUBLE_TAP_DELAY = 300; // ms
+	
+	// Drag state for press-and-hold drag
+	let dragState: {
+		isDragging: boolean;
+		dragSid: string | null; // stick being dragged (from bag or placed)
+		dragStartCell: { r: number; c: number } | null;
+		dragCluster: string[]; // all stick IDs in cluster if dragging placed stick
+	} = {
+		isDragging: false,
+		dragSid: null,
+		dragStartCell: null,
+		dragCluster: []
+	};
+	let holdTimer: ReturnType<typeof setTimeout> | null = null;
+	const HOLD_DELAY = 200; // ms to hold before drag starts
 
 	// UI computed
 	$: filledCells = countFilled(board);
@@ -93,26 +108,28 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate and lock board size once - size to fill vertical canvas space
+		// Calculate board size responsively - recalculate on resize
 		const calculateBoardSize = () => {
-			const vw = window.innerWidth;
-			const vh = window.innerHeight;
+			// Use visual viewport if available (better for mobile)
+			const vw = window.visualViewport?.width || window.innerWidth;
+			const vh = window.visualViewport?.height || window.innerHeight;
 			const isDesktop = vw > 768;
 			
 			// Reserve space for UI elements (12x11 board)
-			// Header: ~120px, Clue bar: ~40px, Bank: ~180px (reduced), Padding: ~40px
-			const reservedHeight = isDesktop ? 400 : 280; // Reduced for mobile to show more morphemes
+			// Account for padding: 10px on each side = 20px total
+			// Header: ~120px, Clue bar: ~40px, Bank: ~180px, Padding: ~40px
+			const reservedHeight = isDesktop ? 400 : 280;
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
-			// Completely new sizing strategy: size board to fill available width without constraints
-			// No reserved width - let board use full available width
-			const availableWidth = vw;
+			// Account for screen padding (10px each side) - but ensure we don't make board too small
+			const screenPadding = 20;
+			const availableWidth = Math.max(vw - screenPadding, 300); // Minimum 300px width
 			
 			// Board is 12 wide by 11 tall (aspect ratio 12:11)
 			// Size based on width first, then check height fits
 			let boardWidth: number;
 			
-			// Calculate based on available width (no padding constraints)
+			// Calculate based on available width
 			boardWidth = availableWidth;
 			
 			// But ensure height fits
@@ -123,20 +140,29 @@
 			}
 			
 			// Ensure minimum size - board should be at least wide enough for 12 tiles
-			// Reduced by 1px per tile = 12px total reduction for better fit
-			const minTileSize = 27; // Reduced from 28 to 27 (1px per tile)
-			const minBoardWidth = minTileSize * 12; // 324px minimum width (was 336px)
+			const minTileSize = 27;
+			const minBoardWidth = minTileSize * 12; // 324px minimum width
 			if (boardWidth < minBoardWidth) {
 				boardWidth = minBoardWidth;
 			}
 			
 			// Set maximum to prevent board from being too large
-			const maxBoardWidth = isDesktop ? 1200 : 400; // Much larger max on desktop, reasonable on mobile
+			const maxBoardWidth = isDesktop ? 1200 : 400;
 			boardWidth = Math.min(boardWidth, maxBoardWidth);
 			
 			boardSize = `${boardWidth}px`; // Height calculated automatically via CSS aspect-ratio
 		};
+		
 		calculateBoardSize();
+		
+		// Recalculate on window resize and visual viewport change (for mobile)
+		const handleResize = () => {
+			calculateBoardSize();
+		};
+		window.addEventListener('resize', handleResize);
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('resize', handleResize);
+		}
 		
 		startNewGame();
 		// any first user action hides cheat sheet
@@ -203,12 +229,23 @@
 		const handleMouseMove = (e: MouseEvent) => {
 			mouseX = e.clientX;
 			mouseY = e.clientY;
+			// Also handle global drag tracking
+			handleGlobalMouseMove(e);
 		};
 		window.addEventListener('mousemove', handleMouseMove);
+		window.addEventListener('mouseup', handleGlobalMouseUp);
 		
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousemove', handleMouseMove);
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			window.removeEventListener('resize', handleResize);
+			if (window.visualViewport) {
+				window.visualViewport.removeEventListener('resize', handleResize);
+			}
+			if (holdTimer) {
+				clearTimeout(holdTimer);
+			}
 		};
 	});
 
@@ -382,7 +419,11 @@
 	
 	function handleCellMouseEnter(r: number, c: number) {
 		// Track hover for shadow preview - only update if cell changed (prevents flicker)
-		if (selectedSid) {
+		if (dragState.isDragging) {
+			// Update drag position
+			hoverCell = { r, c };
+			lastHoverCell = { r, c };
+		} else if (selectedSid) {
 			// Only update if moving to a different cell
 			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
 				hoverCell = { r, c };
@@ -393,7 +434,11 @@
 	
 	function handleCellMouseMove(r: number, c: number) {
 		// Update cursor position for shadow preview - only if cell changed
-		if (selectedSid) {
+		if (dragState.isDragging) {
+			// Update drag position
+			hoverCell = { r, c };
+			lastHoverCell = { r, c };
+		} else if (selectedSid) {
 			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
 				hoverCell = { r, c };
 				lastHoverCell = { r, c };
@@ -402,8 +447,127 @@
 	}
 	
 	function handleCellMouseLeave() {
-		hoverCell = null;
-		lastHoverCell = null;
+		// Don't clear hoverCell if we're dragging - we need to track position globally
+		if (!dragState.isDragging) {
+			hoverCell = null;
+			lastHoverCell = null;
+		}
+	}
+	
+	function handleCellMouseDown(r: number, c: number, e: MouseEvent) {
+		// Prevent default to avoid text selection
+		e.preventDefault();
+		
+		// Check if there's a placed stick at this cell
+		const cell = board.cells[r][c];
+		if (cell && cell.stickIds.length > 0) {
+			// Start hold timer for drag
+			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
+			holdTimer = setTimeout(() => {
+				// Hold completed - start drag
+				const cluster = findCluster(sidToDrag);
+				dragState = {
+					isDragging: true,
+					dragSid: sidToDrag,
+					dragStartCell: { r, c },
+					dragCluster: cluster
+				};
+				selectedPlacedSid = sidToDrag;
+				selectedSid = null; // Clear bag selection
+				holdTimer = null;
+			}, HOLD_DELAY);
+		}
+	}
+	
+	function handleCellMouseUp(r: number, c: number, e: MouseEvent) {
+		e.preventDefault();
+		
+		// Clear hold timer if it exists
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+		
+		// Handle drag end - use current hoverCell or this cell
+		if (dragState.isDragging) {
+			const targetCell = hoverCell || { r, c };
+			// Calculate offset from drag start
+			if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
+				const offsetR = targetCell.r - dragState.dragStartCell.r;
+				const offsetC = targetCell.c - dragState.dragStartCell.c;
+				
+				// Get first stick's position
+				const firstSid = dragState.dragCluster[0];
+				const firstPlaced = board.placed[firstSid];
+				if (firstPlaced) {
+					const newR = firstPlaced.row + offsetR;
+					const newC = firstPlaced.col + offsetC;
+					
+					// Try to move the cluster
+					if (moveCluster(dragState.dragCluster, newR, newC)) {
+						// Success - clear drag state
+						dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+						hoverCell = null;
+						lastHoverCell = null;
+						selectedPlacedSid = null;
+						return;
+					}
+				}
+			}
+			
+			// Drag failed or cancelled - clear drag state
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+			hoverCell = null;
+			lastHoverCell = null;
+		}
+	}
+	
+	// Global mouseup handler to catch drag end even if mouse leaves board
+	function handleGlobalMouseUp(e: MouseEvent) {
+		if (dragState.isDragging) {
+			// Find which cell the mouse is over
+			const element = document.elementFromPoint(e.clientX, e.clientY);
+			if (element) {
+				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+				if (cellEl) {
+					const r = parseInt(cellEl.dataset.r || '0');
+					const c = parseInt(cellEl.dataset.c || '0');
+					if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
+						handleCellMouseUp(r, c, e);
+						return;
+					}
+				}
+			}
+			// Mouse not over a cell - cancel drag
+			if (holdTimer) {
+				clearTimeout(holdTimer);
+				holdTimer = null;
+			}
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+			hoverCell = null;
+			lastHoverCell = null;
+		}
+	}
+	
+	// Global mousemove handler to track drag position even outside cells
+	function handleGlobalMouseMove(e: MouseEvent) {
+		if (dragState.isDragging) {
+			// Find which cell the mouse is over
+			const element = document.elementFromPoint(e.clientX, e.clientY);
+			if (element) {
+				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+				if (cellEl) {
+					const r = parseInt(cellEl.dataset.r || '0');
+					const c = parseInt(cellEl.dataset.c || '0');
+					if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
+						if (!hoverCell || hoverCell.r !== r || hoverCell.c !== c) {
+							hoverCell = { r, c };
+							lastHoverCell = { r, c };
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	function handleCellDoubleClick(r: number, c: number, e: MouseEvent) {
@@ -425,8 +589,32 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Track touch position for shadow preview
-		if (selectedSid) {
+		// Clear any existing hold timer
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+		
+		// Check if there's a placed stick at this cell
+		const cell = board.cells[r][c];
+		if (cell && cell.stickIds.length > 0) {
+			// Start hold timer for drag
+			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
+			holdTimer = setTimeout(() => {
+				// Hold completed - start drag
+				const cluster = findCluster(sidToDrag);
+				dragState = {
+					isDragging: true,
+					dragSid: sidToDrag,
+					dragStartCell: { r, c },
+					dragCluster: cluster
+				};
+				selectedPlacedSid = sidToDrag;
+				selectedSid = null; // Clear bag selection
+				holdTimer = null;
+			}, HOLD_DELAY);
+		} else if (selectedSid) {
+			// Track touch position for shadow preview (unplaced stick from bag)
 			touchCell = { r, c };
 		}
 	}
@@ -435,20 +623,46 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Update touch position while moving finger - only if cell changed (prevents flicker)
-		if (selectedSid && e.touches.length > 0) {
-			const touch = e.touches[0];
-			const element = document.elementFromPoint(touch.clientX, touch.clientY);
-			if (element) {
-				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-				if (cellEl) {
-					const newR = parseInt(cellEl.dataset.r || '0');
-					const newC = parseInt(cellEl.dataset.c || '0');
-					if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
-						// Only update if moving to a different cell
-						if (!lastTouchCell || lastTouchCell.r !== newR || lastTouchCell.c !== newC) {
+		// If dragging a placed stick, cancel hold timer and update drag position
+		if (holdTimer) {
+			// Moved too much - cancel hold timer
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+		
+		if (dragState.isDragging) {
+			// Update drag position
+			if (e.touches.length > 0) {
+				const touch = e.touches[0];
+				const element = document.elementFromPoint(touch.clientX, touch.clientY);
+				if (element) {
+					const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+					if (cellEl) {
+						const newR = parseInt(cellEl.dataset.r || '0');
+						const newC = parseInt(cellEl.dataset.c || '0');
+						if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
 							touchCell = { r: newR, c: newC };
 							lastTouchCell = { r: newR, c: newC };
+						}
+					}
+				}
+			}
+		} else if (selectedSid) {
+			// Update touch position while moving finger - only if cell changed (prevents flicker)
+			if (e.touches.length > 0) {
+				const touch = e.touches[0];
+				const element = document.elementFromPoint(touch.clientX, touch.clientY);
+				if (element) {
+					const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+					if (cellEl) {
+						const newR = parseInt(cellEl.dataset.r || '0');
+						const newC = parseInt(cellEl.dataset.c || '0');
+						if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
+							// Only update if moving to a different cell
+							if (!lastTouchCell || lastTouchCell.r !== newR || lastTouchCell.c !== newC) {
+								touchCell = { r: newR, c: newC };
+								lastTouchCell = { r: newR, c: newC };
+							}
 						}
 					}
 				}
@@ -459,6 +673,42 @@
 	function handleCellTouchEnd(r: number, c: number, e: TouchEvent) {
 		e.preventDefault();
 		e.stopPropagation();
+		
+		// Clear hold timer if it exists
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+		
+		// Handle drag end
+		if (dragState.isDragging && touchCell) {
+			// Calculate offset from drag start
+			if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
+				const offsetR = touchCell.r - dragState.dragStartCell.r;
+				const offsetC = touchCell.c - dragState.dragStartCell.c;
+				
+				// Get first stick's position
+				const firstSid = dragState.dragCluster[0];
+				const firstPlaced = board.placed[firstSid];
+				if (firstPlaced) {
+					const newR = firstPlaced.row + offsetR;
+					const newC = firstPlaced.col + offsetC;
+					
+					// Try to move the cluster
+					if (moveCluster(dragState.dragCluster, newR, newC)) {
+						// Success - clear drag state
+						dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+						touchCell = null;
+						lastTouchCell = null;
+						selectedPlacedSid = null;
+						return;
+					}
+				}
+			}
+			
+			// Drag failed or cancelled - clear drag state
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		}
 		
 		// Clear touch tracking
 		touchCell = null;
@@ -507,7 +757,91 @@
 		}
 	}
 	
-	// moveCluster function removed - drag functionality removed
+	// Find all sticks in a cluster (connected via intersections)
+	function findCluster(sid: string): string[] {
+		const visited = new Set<string>();
+		const cluster: string[] = [];
+		const queue: string[] = [sid];
+		
+		while (queue.length > 0) {
+			const currentSid = queue.shift()!;
+			if (visited.has(currentSid)) continue;
+			visited.add(currentSid);
+			cluster.push(currentSid);
+			
+			const placed = board.placed[currentSid];
+			if (!placed) continue;
+			
+			// Find all cells this stick occupies
+			const dr = placed.orientation === 'V' ? 1 : 0;
+			const dc = placed.orientation === 'H' ? 1 : 0;
+			
+			for (let i = 0; i < placed.text.length; i++) {
+				const r = placed.row + dr * i;
+				const c = placed.col + dc * i;
+				const cell = board.cells[r]?.[c];
+				if (!cell) continue;
+				
+				// Add all other sticks at this cell to the cluster
+				for (const otherSid of cell.stickIds) {
+					if (otherSid !== currentSid && !visited.has(otherSid)) {
+						queue.push(otherSid);
+					}
+				}
+			}
+		}
+		
+		return cluster;
+	}
+	
+	// Move a cluster of sticks to a new position
+	function moveCluster(clusterSids: string[], newRow: number, newCol: number): boolean {
+		if (clusterSids.length === 0) return false;
+		
+		// Get the first stick's original position to calculate offset
+		const firstSid = clusterSids[0];
+		const firstPlaced = board.placed[firstSid];
+		if (!firstPlaced) return false;
+		
+		const rowOffset = newRow - firstPlaced.row;
+		const colOffset = newCol - firstPlaced.col;
+		
+		// Check if all sticks can be moved
+		let tempBoard = structuredClone(board);
+		for (const sid of clusterSids) {
+			const placed = tempBoard.placed[sid];
+			if (!placed) continue;
+			
+			const newR = placed.row + rowOffset;
+			const newC = placed.col + colOffset;
+			
+			// Remove from temp board
+			tempBoard = removeStick(tempBoard, sid);
+			
+			// Check if can place at new position
+			const tempStick: Stick = { sid, text: placed.text, orientation: placed.orientation, placed: true };
+			const ok = canPlaceStick(tempBoard, tempStick, newR, newC, bag.constraints.max_intersections_per_wordpair);
+			if (!ok.ok) {
+				return false; // Can't move cluster
+			}
+			
+			// Place in temp board
+			tempBoard = placeStick(tempBoard, tempStick, newR, newC);
+		}
+		
+		// All checks passed, apply the move
+		pushHistory();
+		for (const sid of clusterSids) {
+			const placed = board.placed[sid];
+			if (!placed) continue;
+			const newR = placed.row + rowOffset;
+			const newC = placed.col + colOffset;
+			board = moveStick(board, sid, newR, newC);
+		}
+		
+		return true;
+	}
+	
 	function disassembleCluster(r: number, c: number) {
 		const cell = board.cells[r][c];
 		if (!cell || cell.stickIds.length === 0) return;
@@ -626,7 +960,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.05 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.06 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -705,6 +1039,11 @@
 							on:mousedown={(e) => {
 								// Prevent text selection on click
 								e.preventDefault();
+								handleCellMouseDown(r, c, e);
+							}}
+							on:mouseup={(e) => {
+								e.preventDefault();
+								handleCellMouseUp(r, c, e);
 							}}
 							on:dblclick={(e) => {
 								e.stopPropagation();
@@ -726,41 +1065,77 @@
 				{/each}
 
 				<!-- Shadow preview when stick is selected and hovering/touching over board -->
-				{#if selectedSid && (hoverCell || touchCell)}
+				{#if (selectedSid || dragState.isDragging) && (hoverCell || touchCell)}
 					{@const previewCell = hoverCell || touchCell}
-					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
-					{#if selectedStick && !selectedStick.placed && previewCell}
-						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
-						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
-						{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
-						{#if placementCheck.ok}
-							{#each Array(selectedStick.text.length) as _, i}
-								{@const shadowR = previewCell.r + dr * i}
-								{@const shadowC = previewCell.c + dc * i}
-								{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
-									<div 
-										class="cell shadow shadowValid"
-										style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
-									>
-										<span class="letter shadowLetter">{selectedStick.text[i]}</span>
-									</div>
-								{/if}
-							{/each}
-						{:else}
-							<!-- Show invalid placement preview (red) on touch screens -->
-							{#if touchCell}
+					{#if dragState.isDragging && dragState.dragCluster.length > 0}
+						<!-- Show drag preview for cluster -->
+						{#each dragState.dragCluster as sid}
+							{@const placed = board.placed[sid]}
+							{#if placed && dragState.dragStartCell && previewCell}
+								{@const offsetR = previewCell.r - dragState.dragStartCell.r}
+								{@const offsetC = previewCell.c - dragState.dragStartCell.c}
+								{@const newR = placed.row + offsetR}
+								{@const newC = placed.col + offsetC}
+								{@const dr = placed.orientation === 'V' ? 1 : 0}
+								{@const dc = placed.orientation === 'H' ? 1 : 0}
+								{#each Array(placed.text.length) as _, i}
+									{@const shadowR = newR + dr * i}
+									{@const shadowC = newC + dc * i}
+									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+										{@const tempStick: Stick = { sid, text: placed.text, orientation: placed.orientation, placed: true }}
+										{@const tempBoard = (() => {
+											let tb = structuredClone(board);
+											for (const csid of dragState.dragCluster) {
+												tb = removeStick(tb, csid);
+											}
+											return tb;
+										})()}
+										{@const canPlace = canPlaceStick(tempBoard, tempStick, newR, newC, bag.constraints.max_intersections_per_wordpair)}
+										<div 
+											class="cell shadow {canPlace.ok ? 'shadowValid' : 'shadowInvalid'}"
+											style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+										>
+											<span class="letter shadowLetter">{placed.text[i]}</span>
+										</div>
+									{/if}
+								{/each}
+							{/if}
+						{/each}
+					{:else if selectedSid}
+						{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
+						{#if selectedStick && !selectedStick.placed && previewCell}
+							{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
+							{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
+							{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
+							{#if placementCheck.ok}
 								{#each Array(selectedStick.text.length) as _, i}
 									{@const shadowR = previewCell.r + dr * i}
 									{@const shadowC = previewCell.c + dc * i}
 									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
 										<div 
-											class="cell shadow shadowInvalid"
+											class="cell shadow shadowValid"
 											style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
 										>
 											<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 										</div>
 									{/if}
 								{/each}
+							{:else}
+								<!-- Show invalid placement preview (red) on touch screens -->
+								{#if touchCell}
+									{#each Array(selectedStick.text.length) as _, i}
+										{@const shadowR = previewCell.r + dr * i}
+										{@const shadowC = previewCell.c + dc * i}
+										{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+											<div 
+												class="cell shadow shadowInvalid"
+												style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+											>
+												<span class="letter shadowLetter">{selectedStick.text[i]}</span>
+											</div>
+										{/if}
+									{/each}
+								{/if}
 							{/if}
 						{/if}
 					{/if}
@@ -1132,10 +1507,14 @@
 		justify-content: flex-start;
 		margin: 0 auto;
 		width: 100%;
+		max-width: 100%;
 		overflow: visible; /* Allow board to extend to edges */
 		/* Prevent clipping on right and bottom */
 		padding-right: 0;
 		padding-bottom: 0;
+		min-width: 0; /* Allow flex shrinking */
+		flex: 1 1 auto; /* Allow growing and shrinking */
+		box-sizing: border-box;
 	}
 
 	.board {
@@ -1154,9 +1533,10 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		flex-shrink: 0; /* prevent resizing */
-		/* Size is set inline via style attribute, calculated once on mount */
+		/* Size is set inline via style attribute, calculated responsively */
 		/* Ensure board doesn't get clipped */
 		box-sizing: border-box;
+		max-width: 100%;
 	}
 
 	/* subtle grid lines */
