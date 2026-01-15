@@ -17,8 +17,8 @@
 	let showClue = true;
 	let showClueDetails = false; // toggle between question and metadata
 	
-	// Responsive board size (recalculated on resize)
-	let boardSize = 'min(calc(100vw - 40px), calc(100vh - 420px))';
+	// Responsive board size - use CSS calc for true responsiveness
+	let boardSize = '100%';
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -108,61 +108,7 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate board size responsively - recalculate on resize
-		const calculateBoardSize = () => {
-			// Use visual viewport if available (better for mobile)
-			const vw = window.visualViewport?.width || window.innerWidth;
-			const vh = window.visualViewport?.height || window.innerHeight;
-			const isDesktop = vw > 768;
-			
-			// Reserve space for UI elements (12x11 board)
-			// Account for padding: 10px on each side = 20px total
-			// Header: ~120px, Clue bar: ~40px, Bank: ~180px, Padding: ~40px
-			const reservedHeight = isDesktop ? 400 : 280;
-			const availableHeight = Math.max(0, vh - reservedHeight);
-			
-			// Account for screen padding (10px each side) - but ensure we don't make board too small
-			const screenPadding = 20;
-			const availableWidth = Math.max(vw - screenPadding, 300); // Minimum 300px width
-			
-			// Board is 12 wide by 11 tall (aspect ratio 12:11)
-			// Size based on width first, then check height fits
-			let boardWidth: number;
-			
-			// Calculate based on available width
-			boardWidth = availableWidth;
-			
-			// But ensure height fits
-			const boardHeight = boardWidth * (11/12);
-			if (boardHeight > availableHeight) {
-				// If too tall, size based on height instead
-				boardWidth = availableHeight * (12/11);
-			}
-			
-			// Ensure minimum size - board should be at least wide enough for 12 tiles
-			const minTileSize = 27;
-			const minBoardWidth = minTileSize * 12; // 324px minimum width
-			if (boardWidth < minBoardWidth) {
-				boardWidth = minBoardWidth;
-			}
-			
-			// Set maximum to prevent board from being too large
-			const maxBoardWidth = isDesktop ? 1200 : 400;
-			boardWidth = Math.min(boardWidth, maxBoardWidth);
-			
-			boardSize = `${boardWidth}px`; // Height calculated automatically via CSS aspect-ratio
-		};
-		
-		calculateBoardSize();
-		
-		// Recalculate on window resize and visual viewport change (for mobile)
-		const handleResize = () => {
-			calculateBoardSize();
-		};
-		window.addEventListener('resize', handleResize);
-		if (window.visualViewport) {
-			window.visualViewport.addEventListener('resize', handleResize);
-		}
+		// Board sizing is now handled purely by CSS - no JS calculation needed
 		
 		startNewGame();
 		// any first user action hides cheat sheet
@@ -239,10 +185,6 @@
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousemove', handleMouseMove);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			window.removeEventListener('resize', handleResize);
-			if (window.visualViewport) {
-				window.visualViewport.removeEventListener('resize', handleResize);
-			}
 			if (holdTimer) {
 				clearTimeout(holdTimer);
 			}
@@ -403,6 +345,11 @@
 			e.stopPropagation();
 		}
 		
+		// Don't handle click if we just finished a drag
+		if (dragState.isDragging) {
+			return;
+		}
+		
 		// Handle click: if stick is selected, try to place first (even on settled sticks)
 		// If no stick selected or placement fails, then select the cell's stick
 		if (selectedSid) {
@@ -457,6 +404,12 @@
 	function handleCellMouseDown(r: number, c: number, e: MouseEvent) {
 		// Prevent default to avoid text selection
 		e.preventDefault();
+		e.stopPropagation();
+		
+		// Clear any existing drag state
+		if (dragState.isDragging) {
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		}
 		
 		// Check if there's a placed stick at this cell
 		const cell = board.cells[r][c];
@@ -474,6 +427,8 @@
 				};
 				selectedPlacedSid = sidToDrag;
 				selectedSid = null; // Clear bag selection
+				hoverCell = { r, c }; // Initialize hover cell
+				lastHoverCell = { r, c };
 				holdTimer = null;
 			}, HOLD_DELAY);
 		}
@@ -595,6 +550,11 @@
 			holdTimer = null;
 		}
 		
+		// Clear any existing drag state
+		if (dragState.isDragging) {
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		}
+		
 		// Check if there's a placed stick at this cell
 		const cell = board.cells[r][c];
 		if (cell && cell.stickIds.length > 0) {
@@ -611,11 +571,14 @@
 				};
 				selectedPlacedSid = sidToDrag;
 				selectedSid = null; // Clear bag selection
+				touchCell = { r, c }; // Initialize touch cell
+				lastTouchCell = { r, c };
 				holdTimer = null;
 			}, HOLD_DELAY);
 		} else if (selectedSid) {
 			// Track touch position for shadow preview (unplaced stick from bag)
 			touchCell = { r, c };
+			lastTouchCell = { r, c };
 		}
 	}
 	
@@ -960,7 +923,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.06 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.07 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -998,7 +961,7 @@
 		<div class="boardWrap">
 			<div 
 				class="board" 
-				style="--rows: 11; --cols: 12; width: {boardSize};" 
+				style="--rows: 11; --cols: 12;" 
 				aria-label="12 by 11 board"
 				on:touchmove={(e) => {
 					// Handle touchmove on board to track finger movement across cells - only if cell changed
@@ -1508,13 +1471,22 @@
 		margin: 0 auto;
 		width: 100%;
 		max-width: 100%;
-		overflow: visible; /* Allow board to extend to edges */
-		/* Prevent clipping on right and bottom */
-		padding-right: 0;
-		padding-bottom: 0;
-		min-width: 0; /* Allow flex shrinking */
-		flex: 1 1 auto; /* Allow growing and shrinking */
+		overflow: visible;
+		min-width: 0;
+		flex: 1 1 0; /* Take available space */
+		/* Constrain board width to fit container, accounting for padding */
+		max-width: calc(100vw - 20px); /* 10px padding each side */
+		/* Constrain board height based on available vertical space */
+		max-height: calc(100vh - 280px); /* Reserve space for header, clue, bank */
+		max-height: calc(100dvh - 280px); /* Use dynamic viewport height on mobile */
 		box-sizing: border-box;
+	}
+	
+	/* On desktop, allow larger board */
+	@media (min-width: 769px) {
+		.boardWrap {
+			max-height: calc(100vh - 400px);
+		}
 	}
 
 	.board {
@@ -1532,11 +1504,10 @@
 			radial-gradient(circle at 70% 75%, rgba(200, 140, 255, 0.12), transparent 50%),
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
-		flex-shrink: 0; /* prevent resizing */
-		/* Size is set inline via style attribute, calculated responsively */
-		/* Ensure board doesn't get clipped */
-		box-sizing: border-box;
+		width: 100%;
 		max-width: 100%;
+		/* Board will size based on container - boardWrap controls the size */
+		box-sizing: border-box;
 	}
 
 	/* subtle grid lines */
