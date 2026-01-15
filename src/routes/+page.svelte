@@ -36,6 +36,8 @@
 	
 	// Custom cursor for dragging stick
 	let dragCursor: string | null = null; // First letter of selected stick for cursor
+	let mouseX = 0;
+	let mouseY = 0;
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
