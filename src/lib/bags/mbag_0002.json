@@ -36,7 +36,6 @@
     { "sid": "s3_06", "text": "EEL" },
     { "sid": "s3_07", "text": "LED" },
     { "sid": "s3_08", "text": "GEM" },
-    { "sid": "s3_09", "text": "RUB" },
 
     { "sid": "s2_01", "text": "ED" },
     { "sid": "s2_02", "text": "ER" },
@@ -57,7 +56,6 @@
     { "sid": "s1_06", "text": "N" },
     { "sid": "s1_07", "text": "O" },
     { "sid": "s1_08", "text": "I" },
-    { "sid": "s1_09", "text": "L" },
     { "sid": "wild", "text": "*", "type": "wildcard" }
   ],
   "bonus": {

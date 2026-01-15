@@ -98,8 +98,8 @@
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
 			// Reserve space for side padding - reduce to prevent clipping
-			// On desktop (no-touch), make canvas wider
-			const reservedWidth = isDesktop ? 10 : 0; // Further reduced to prevent clipping
+			// On desktop (no-touch), make canvas wider and account for reduced tile size
+			const reservedWidth = isDesktop ? 5 : 0; // Further reduced to prevent right-side clipping
 			const availableWidth = Math.max(0, vw - reservedWidth);
 			
 			// Board is 12 wide by 11 tall (aspect ratio 12:11)
@@ -109,18 +109,19 @@
 			let boardHeight: number;
 			
 			if (isDesktop) {
-				// On desktop, use more width for bigger board
-				boardWidth = Math.min(availableWidth * 0.95, availableHeight * (12/11) * 0.95);
+				// On desktop, use more width for bigger board - account for smaller tiles
+				boardWidth = Math.min(availableWidth * 0.98, availableHeight * (12/11) * 0.98); // Increased from 0.95 to 0.98
 				boardHeight = boardWidth * (11/12); // Height based on aspect ratio
 			} else {
-				// On mobile, use available width, but ensure height fits
-				boardWidth = Math.min(availableWidth, availableHeight * (12/11));
+				// On mobile, use available width, but ensure height fits - account for smaller tiles
+				boardWidth = Math.min(availableWidth * 0.99, availableHeight * (12/11) * 0.99); // Use 99% to prevent clipping
 				boardHeight = boardWidth * (11/12);
 			}
 			
 			// Ensure minimum size - board should be at least wide enough for 12 tiles
-			const minTileSize = 28;
-			const minBoardWidth = minTileSize * 12; // 336px minimum width
+			// Reduced by 1px per tile = 12px total reduction for better fit
+			const minTileSize = 27; // Reduced from 28 to 27 (1px per tile)
+			const minBoardWidth = minTileSize * 12; // 324px minimum width (was 336px)
 			if (boardWidth < minBoardWidth) {
 				boardWidth = Math.min(minBoardWidth, availableWidth);
 				boardHeight = boardWidth * (11/12);
@@ -597,7 +598,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.03 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.04 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1119,7 +1120,7 @@
 		position: relative;
 		z-index: 50; /* Higher than regular cells to overlay */
 		pointer-events: none;
-		opacity: 0.85;
+		opacity: 0.95; /* Increased from 0.85 to 0.95 for better visibility */
 		margin: 0;
 		border-right: 1px solid rgba(255,255,255,0.06);
 		border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -1127,9 +1128,10 @@
 	}
 
 	.cell.shadowValid {
-		outline: 1px solid rgba(132, 255, 160, 0.8);
-		outline-offset: -1px;
-		background: rgba(132, 255, 160, 0.15);
+		outline: 2px solid rgba(132, 255, 160, 1); /* Increased from 1px to 2px, full opacity for better visibility */
+		outline-offset: -2px;
+		background: rgba(132, 255, 160, 0.25); /* Increased opacity from 0.15 to 0.25 for better visibility */
+		box-shadow: 0 0 4px rgba(132, 255, 160, 0.6); /* Added glow effect for better visibility */
 	}
 
 	.cell.shadowInvalid {
@@ -1139,7 +1141,9 @@
 	}
 
 	.shadowLetter {
-		color: rgba(233, 236, 255, 0.9);
+		color: rgba(233, 236, 255, 1); /* Full opacity for better visibility */
+		font-weight: 900; /* Bolder text for better visibility */
+		text-shadow: 0 0 2px rgba(132, 255, 160, 0.8); /* Added glow effect */
 	}
 
 	.bankActions .iconBtn {
@@ -1444,8 +1448,8 @@
 	}
 
 	.tile {
-		width: 25px; /* increased from 20px (+5px) */
-		height: 25px; /* increased from 20px (+5px) */
+		width: 24px; /* reduced by 1px from 25px for better fit */
+		height: 24px; /* reduced by 1px from 25px for better fit */
 		border-radius: 6px;
 		display: grid;
 		place-items: center;
