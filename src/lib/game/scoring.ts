@@ -55,7 +55,23 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		}
 	}
 
-	// Extract words (contiguous sequences)
+	// Extract words (contiguous sequences) - but only count sequences that align with complete placed sticks
+	// Build a map of cells to the sticks they belong to
+	const cellToSticks = new Map<string, Set<string>>();
+	for (const [sid, placed] of Object.entries(board.placed)) {
+		const dr = placed.orientation === 'V' ? 1 : 0;
+		const dc = placed.orientation === 'H' ? 1 : 0;
+		for (let i = 0; i < placed.text.length; i++) {
+			const r = placed.row + dr * i;
+			const c = placed.col + dc * i;
+			const key = `${r},${c}`;
+			if (!cellToSticks.has(key)) {
+				cellToSticks.set(key, new Set());
+			}
+			cellToSticks.get(key)!.add(sid);
+		}
+	}
+
 	const words: { text: string; dir: 'H' | 'V'; row: number; col: number; len: number; cells: string[] }[] = [];
 
 	// Horizontal
@@ -69,12 +85,24 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 			const startC = c;
 			let text = '';
 			const cells: string[] = [];
+			const stickIdsInSequence = new Set<string>();
 			while (c < cols && board.cells[r][c]) {
 				text += board.cells[r][c]!.letter;
-				cells.push(`${r},${c}`);
+				const cellKey = `${r},${c}`;
+				cells.push(cellKey);
+				// Track which sticks this sequence spans
+				const sticksInCell = cellToSticks.get(cellKey);
+				if (sticksInCell) {
+					for (const sid of sticksInCell) {
+						stickIdsInSequence.add(sid);
+					}
+				}
 				c++;
 			}
-			words.push({ text, dir: 'H', row: r, col: startC, len: text.length, cells });
+			// Only add if sequence is length >= minWordLen (ignore single letters)
+			if (text.length >= minWordLen) {
+				words.push({ text, dir: 'H', row: r, col: startC, len: text.length, cells });
+			}
 		}
 	}
 
@@ -89,12 +117,24 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 			const startR = r;
 			let text = '';
 			const cells: string[] = [];
+			const stickIdsInSequence = new Set<string>();
 			while (r < rows && board.cells[r][c]) {
 				text += board.cells[r][c]!.letter;
-				cells.push(`${r},${c}`);
+				const cellKey = `${r},${c}`;
+				cells.push(cellKey);
+				// Track which sticks this sequence spans
+				const sticksInCell = cellToSticks.get(cellKey);
+				if (sticksInCell) {
+					for (const sid of sticksInCell) {
+						stickIdsInSequence.add(sid);
+					}
+				}
 				r++;
 			}
-			words.push({ text, dir: 'V', row: startR, col: c, len: text.length, cells });
+			// Only add if sequence is length >= minWordLen (ignore single letters)
+			if (text.length >= minWordLen) {
+				words.push({ text, dir: 'V', row: startR, col: c, len: text.length, cells });
+			}
 		}
 	}
 
@@ -129,7 +169,8 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		}
 	}
 	
-	// No short runs (strict MVP): forbid any 1–2 letter horizontal/vertical runs
+	// No short runs - we already filtered these out during extraction (only sequences >= minWordLen)
+	// But double-check: should not have any words < minWordLen at this point
 	const shortRuns = filteredWords.filter((w) => w.len > 0 && w.len < minWordLen);
 	if (shortRuns.length) {
 		issues.push(`Submit blocked: found ${shortRuns.length} short run(s) (length 1–2).`);

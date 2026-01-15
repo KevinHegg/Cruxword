@@ -32,6 +32,10 @@
 	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over (mouse)
 	let touchCell: { r: number; c: number } | null = null; // cell being touched (touch screens)
 	let lastHoverCell: { r: number; c: number } | null = null; // last cell that showed shadow (to prevent flicker)
+	let lastTouchCell: { r: number; c: number } | null = null; // last cell touched (to prevent flicker on touch)
+	
+	// Custom cursor for dragging stick
+	let dragCursor: string | null = null; // First letter of selected stick for cursor
 
 	// Board selection
 	let selectedPlacedSid: string | null = null;
@@ -50,6 +54,7 @@
 	$: remainingCount = sticks.filter((s) => !s.placed).length;
 
 	$: selectedStick = selectedSid ? sticks.find((s) => s.sid === selectedSid) ?? null : null;
+	$: dragCursor = selectedStick && !selectedStick.placed ? selectedStick.text[0] : null;
 	
 	// Computed: disable submit button when structure is invalid
 	$: submitValidation = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
@@ -97,25 +102,22 @@
 			const reservedHeight = isDesktop ? 400 : 280; // Reduced for mobile to show more morphemes
 			const availableHeight = Math.max(0, vh - reservedHeight);
 			
-			// Reserve space for side padding - reduce to prevent clipping
-			// On desktop (no-touch), make canvas wider and account for reduced tile size
-			const reservedWidth = isDesktop ? 5 : 0; // Further reduced to prevent right-side clipping
-			const availableWidth = Math.max(0, vw - reservedWidth);
+			// Completely new sizing strategy: size board to fill available width without constraints
+			// No reserved width - let board use full available width
+			const availableWidth = vw;
 			
 			// Board is 12 wide by 11 tall (aspect ratio 12:11)
-			// Calculate size based on width first (since board is wider than tall)
-			// Then ensure height fits
+			// Size based on width first, then check height fits
 			let boardWidth: number;
-			let boardHeight: number;
 			
-			if (isDesktop) {
-				// On desktop, use more width for bigger board - account for smaller tiles
-				boardWidth = Math.min(availableWidth * 0.98, availableHeight * (12/11) * 0.98); // Increased from 0.95 to 0.98
-				boardHeight = boardWidth * (11/12); // Height based on aspect ratio
-			} else {
-				// On mobile, use available width, but ensure height fits - account for smaller tiles
-				boardWidth = Math.min(availableWidth * 0.99, availableHeight * (12/11) * 0.99); // Use 99% to prevent clipping
-				boardHeight = boardWidth * (11/12);
+			// Calculate based on available width (no padding constraints)
+			boardWidth = availableWidth;
+			
+			// But ensure height fits
+			const boardHeight = boardWidth * (11/12);
+			if (boardHeight > availableHeight) {
+				// If too tall, size based on height instead
+				boardWidth = availableHeight * (12/11);
 			}
 			
 			// Ensure minimum size - board should be at least wide enough for 12 tiles
@@ -123,13 +125,13 @@
 			const minTileSize = 27; // Reduced from 28 to 27 (1px per tile)
 			const minBoardWidth = minTileSize * 12; // 324px minimum width (was 336px)
 			if (boardWidth < minBoardWidth) {
-				boardWidth = Math.min(minBoardWidth, availableWidth);
-				boardHeight = boardWidth * (11/12);
+				boardWidth = minBoardWidth;
 			}
 			
-			// Use width for sizing (board is wider than tall)
-			const maxBoardWidth = isDesktop ? 850 : 680;
-			boardWidth = Math.max(minBoardWidth, Math.min(maxBoardWidth, boardWidth));
+			// Set maximum to prevent board from being too large
+			const maxBoardWidth = isDesktop ? 1200 : 400; // Much larger max on desktop, reasonable on mobile
+			boardWidth = Math.min(boardWidth, maxBoardWidth);
+			
 			boardSize = `${boardWidth}px`; // Height calculated automatically via CSS aspect-ratio
 		};
 		calculateBoardSize();
@@ -194,8 +196,17 @@
 		};
 		
 		window.addEventListener('keydown', handleKeyDown);
+		
+		// Track mouse position globally for custom cursor
+		const handleMouseMove = (e: MouseEvent) => {
+			mouseX = e.clientX;
+			mouseY = e.clientY;
+		};
+		window.addEventListener('mousemove', handleMouseMove);
+		
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('mousemove', handleMouseMove);
 		};
 	});
 
@@ -378,6 +389,16 @@
 		}
 	}
 	
+	function handleCellMouseMove(r: number, c: number) {
+		// Update cursor position for shadow preview - only if cell changed
+		if (selectedSid) {
+			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
+				hoverCell = { r, c };
+				lastHoverCell = { r, c };
+			}
+		}
+	}
+	
 	function handleCellMouseLeave() {
 		hoverCell = null;
 		lastHoverCell = null;
@@ -412,7 +433,7 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Update touch position while moving finger - use elementFromPoint to find current cell
+		// Update touch position while moving finger - only if cell changed (prevents flicker)
 		if (selectedSid && e.touches.length > 0) {
 			const touch = e.touches[0];
 			const element = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -422,7 +443,11 @@
 					const newR = parseInt(cellEl.dataset.r || '0');
 					const newC = parseInt(cellEl.dataset.c || '0');
 					if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
-						touchCell = { r: newR, c: newC };
+						// Only update if moving to a different cell
+						if (!lastTouchCell || lastTouchCell.r !== newR || lastTouchCell.c !== newC) {
+							touchCell = { r: newR, c: newC };
+							lastTouchCell = { r: newR, c: newC };
+						}
 					}
 				}
 			}
@@ -435,6 +460,7 @@
 		
 		// Clear touch tracking
 		touchCell = null;
+		lastTouchCell = null;
 		
 		// For touch events, use double-tap detection
 		const now = Date.now();
@@ -594,7 +620,7 @@
 
 <!-- Window event handlers removed - using click-based placement only -->
 
-<div class="screen" style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;">
+<div class="screen has-drag-cursor={dragCursor !== null}" style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;">
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
@@ -639,7 +665,7 @@
 				style="--rows: 11; --cols: 12; width: {boardSize};" 
 				aria-label="12 by 11 board"
 				on:touchmove={(e) => {
-					// Handle touchmove on board to track finger movement across cells
+					// Handle touchmove on board to track finger movement across cells - only if cell changed
 					if (selectedSid && e.touches.length > 0) {
 						e.preventDefault();
 						const touch = e.touches[0];
@@ -650,7 +676,11 @@
 								const r = parseInt(cellEl.dataset.r || '0');
 								const c = parseInt(cellEl.dataset.c || '0');
 								if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
-									touchCell = { r, c };
+									// Only update if moving to a different cell
+									if (!lastTouchCell || lastTouchCell.r !== r || lastTouchCell.c !== c) {
+										touchCell = { r, c };
+										lastTouchCell = { r, c };
+									}
 								}
 							}
 						}
@@ -682,6 +712,7 @@
 							on:touchmove={(e) => handleCellTouchMove(r, c, e)}
 							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
+							on:mousemove={() => handleCellMouseMove(r, c)}
 							on:mouseleave={handleCellMouseLeave}
 							style="background: {cellStickIds.length > 1 ? `linear-gradient(135deg, ${cellColor} 0%, ${cellColor} 50%, ${cellColor2} 50%, ${cellColor2} 100%)` : cellColor};"
 						>
@@ -692,7 +723,7 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected and hovering/touching over board - only show when valid -->
+				<!-- Shadow preview when stick is selected and hovering/touching over board -->
 				{#if selectedSid && (hoverCell || touchCell)}
 					{@const previewCell = hoverCell || touchCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
@@ -713,6 +744,22 @@
 									</div>
 								{/if}
 							{/each}
+						{:else}
+							<!-- Show invalid placement preview (red) on touch screens -->
+							{#if touchCell}
+								{#each Array(selectedStick.text.length) as _, i}
+									{@const shadowR = previewCell.r + dr * i}
+									{@const shadowC = previewCell.c + dc * i}
+									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+										<div 
+											class="cell shadow shadowInvalid"
+											style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+										>
+											<span class="letter shadowLetter">{selectedStick.text[i]}</span>
+										</div>
+									{/if}
+								{/each}
+							{/if}
 						{/if}
 					{/if}
 				{/if}
@@ -804,6 +851,13 @@
 			</div>
 		</section>
 	</main>
+	
+	<!-- Custom cursor showing first letter when dragging stick (desktop only) -->
+	{#if dragCursor}
+		<div class="dragCursorPreview" style="left: {mouseX}px; top: {mouseY}px;">
+			{dragCursor}
+		</div>
+	{/if}
 
 	<!-- Drag ghost elements removed - using shadow preview on board instead -->
 
@@ -854,6 +908,38 @@
 		height: 100vh;
 		height: 100dvh;
 	}
+	
+	/* Custom cursor showing first letter when dragging stick (desktop only) */
+	:global(body:has(.has-drag-cursor)) {
+		cursor: none !important;
+	}
+	
+	.dragCursorPreview {
+		position: fixed;
+		pointer-events: none;
+		z-index: 10000;
+		font-size: 24px;
+		font-weight: 900;
+		color: rgba(132, 255, 160, 1);
+		text-shadow: 0 0 4px rgba(132, 255, 160, 0.8);
+		background: rgba(0, 0, 0, 0.7);
+		border-radius: 8px;
+		padding: 4px 8px;
+		border: 2px solid rgba(132, 255, 160, 1);
+		transform: translate(-50%, -50%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 40px;
+		min-height: 40px;
+	}
+	
+	/* Only show cursor on desktop */
+	@media (max-width: 768px) {
+		.dragCursorPreview {
+			display: none;
+		}
+	}
 
 	.screen {
 		max-width: 100vw;
@@ -867,11 +953,11 @@
 		flex-direction: column;
 	}
 	
-	/* On desktop, center and size to iPhone 17 Pro */
+	/* On desktop, remove width constraint to allow full board width */
 	@media (min-width: 769px) {
 		.screen {
-			max-width: 393px; /* iPhone 17 Pro width */
-			box-shadow: 0 0 20px rgba(0,0,0,0.3);
+			max-width: 100vw; /* Remove iPhone constraint - allow full width */
+			box-shadow: none; /* Remove shadow since not centered */
 		}
 	}
 
@@ -1135,9 +1221,10 @@
 	}
 
 	.cell.shadowInvalid {
-		outline: 1px dashed rgba(255, 132, 132, 0.8);
-		outline-offset: -1px;
-		background: rgba(255, 132, 132, 0.15);
+		outline: 2px solid rgba(255, 100, 100, 1); /* Thicker, fully opaque red outline for visibility */
+		outline-offset: -2px;
+		background: rgba(255, 100, 100, 0.3); /* Brighter red background for better visibility */
+		box-shadow: 0 0 4px rgba(255, 100, 100, 0.8); /* Red glow effect */
 	}
 
 	.shadowLetter {
