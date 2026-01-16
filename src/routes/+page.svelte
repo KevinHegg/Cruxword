@@ -720,12 +720,33 @@
 			holdTimer = null;
 		}
 		
+		// CRITICAL FIX: Get the actual cell where touch ended, not where it started
+		// Use changedTouches[0] for the touch that ended
+		let endCell = { r, c };
+		if (e.changedTouches && e.changedTouches.length > 0) {
+			const touch = e.changedTouches[0];
+			const element = document.elementFromPoint(touch.clientX, touch.clientY);
+			if (element) {
+				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
+				if (cellEl) {
+					const endR = parseInt(cellEl.dataset.r || '0');
+					const endC = parseInt(cellEl.dataset.c || '0');
+					if (endR >= 0 && endR < board.rows && endC >= 0 && endC < board.cols) {
+						endCell = { r: endR, c: endC };
+					}
+				}
+			}
+		}
+		
+		// Use touchCell if available (most recent tracked position), otherwise use endCell
+		const finalCell = touchCell || endCell;
+		
 		// Handle drag end
-		if (dragState.isDragging && touchCell) {
+		if (dragState.isDragging && finalCell) {
 			// Calculate offset from drag start
 			if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
-				const offsetR = touchCell.r - dragState.dragStartCell.r;
-				const offsetC = touchCell.c - dragState.dragStartCell.c;
+				const offsetR = finalCell.r - dragState.dragStartCell.r;
+				const offsetC = finalCell.c - dragState.dragStartCell.c;
 				
 				// Get first stick's position
 				const firstSid = dragState.dragCluster[0];
@@ -758,28 +779,27 @@
 		const now = Date.now();
 		const isDoubleTap = 
 			now - lastTapTime < DOUBLE_TAP_DELAY && 
-			lastTapCell?.r === r && 
-			lastTapCell?.c === c;
+			lastTapCell?.r === finalCell.r && 
+			lastTapCell?.c === finalCell.c;
 		
 		if (isDoubleTap) {
 			// Double tap: return stick or disassemble cluster
-			const cell = board.cells[r][c];
+			const cell = board.cells[finalCell.r][finalCell.c];
 			if (cell && cell.stickIds.length > 0) {
 				if (cell.stickIds.length === 1) {
 					const sid = cell.stickIds[0];
 					selectedPlacedSid = sid;
 					returnSelectedPlaced();
 				} else {
-					disassembleCluster(r, c);
+					disassembleCluster(finalCell.r, finalCell.c);
 				}
 			}
 			lastTapTime = 0;
 			lastTapCell = null;
 		} else {
-			// Single tap: if stick selected, try to place first (even on settled sticks)
-			// If no stick selected or placement fails, then select the cell's stick
+			// Single tap: if stick selected, try to place at FINAL cell position
 			if (selectedSid) {
-				const placed = tapPlace(r, c);
+				const placed = tapPlace(finalCell.r, finalCell.c);
 				if (placed) {
 					lastTapTime = 0;
 					lastTapCell = null;
@@ -788,12 +808,12 @@
 			}
 			
 			// If cell has content, select its stick
-			if (board.cells[r][c]) {
-				tapCellSelect(r, c);
+			if (board.cells[finalCell.r][finalCell.c]) {
+				tapCellSelect(finalCell.r, finalCell.c);
 			}
 			
 			lastTapTime = now;
-			lastTapCell = { r, c };
+			lastTapCell = { r: finalCell.r, c: finalCell.c };
 		}
 	}
 	
@@ -1000,7 +1020,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.10 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.11 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1618,7 +1638,7 @@
 		position: relative;
 		z-index: 50; /* Higher than regular cells to overlay */
 		pointer-events: none;
-		opacity: 0.95; /* Increased from 0.85 to 0.95 for better visibility */
+		opacity: 0.6; /* More subtle - reduced from 0.95 */
 		margin: 0;
 		border-right: 1px solid rgba(255,255,255,0.06);
 		border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -1626,23 +1646,23 @@
 	}
 
 	.cell.shadowValid {
-		outline: 2px solid rgba(132, 255, 160, 1); /* Increased from 1px to 2px, full opacity for better visibility */
-		outline-offset: -2px;
-		background: rgba(132, 255, 160, 0.25); /* Increased opacity from 0.15 to 0.25 for better visibility */
-		box-shadow: 0 0 4px rgba(132, 255, 160, 0.6); /* Added glow effect for better visibility */
+		outline: 1px solid rgba(132, 255, 160, 0.5); /* More subtle - reduced opacity */
+		outline-offset: -1px;
+		background: rgba(132, 255, 160, 0.1); /* More subtle background */
+		box-shadow: 0 0 2px rgba(132, 255, 160, 0.3); /* Subtle glow */
 	}
 
 	.cell.shadowInvalid {
-		outline: 2px solid rgba(255, 100, 100, 1); /* Thicker, fully opaque red outline for visibility */
-		outline-offset: -2px;
-		background: rgba(255, 100, 100, 0.3); /* Brighter red background for better visibility */
-		box-shadow: 0 0 4px rgba(255, 100, 100, 0.8); /* Red glow effect */
+		outline: 1px solid rgba(255, 100, 100, 0.5); /* More subtle red */
+		outline-offset: -1px;
+		background: rgba(255, 100, 100, 0.15); /* More subtle red background */
+		box-shadow: 0 0 2px rgba(255, 100, 100, 0.4); /* Subtle red glow */
 	}
 
 	.shadowLetter {
-		color: rgba(233, 236, 255, 1); /* Full opacity for better visibility */
-		font-weight: 900; /* Bolder text for better visibility */
-		text-shadow: 0 0 2px rgba(132, 255, 160, 0.8); /* Added glow effect */
+		color: rgba(233, 236, 255, 0.85); /* Slightly transparent for subtlety */
+		font-weight: 800; /* Slightly less bold */
+		text-shadow: none; /* Remove glow for subtlety */
 	}
 
 	.bankActions .iconBtn {
@@ -1786,8 +1806,8 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px; /* ZERO vertical padding */
-		margin: 0; /* ZERO margins */
+		padding: 4px 10px; /* Small top/bottom padding */
+		margin: 0;
 		display: flex;
 		flex-direction: column;
 		height: auto;
@@ -1798,8 +1818,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin: 0; /* ZERO margins */
-		padding: 2px 0; /* Minimal vertical padding */
+		margin: 0;
+		padding: 4px 0; /* Small top/bottom padding */
 		gap: 8px;
 	}
 	
@@ -1828,8 +1848,8 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 0 2px; /* ZERO vertical padding */
-		margin: 0; /* ZERO margins */
+		padding: 2px; /* Small padding all around */
+		margin: 0;
 		flex: 1;
 		min-height: 0;
 		height: auto;
@@ -1874,12 +1894,12 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 0 6px; /* ZERO vertical padding */
-		margin: 0; /* ZERO margins */
+		padding: 2px 6px; /* Small top/bottom padding */
+		margin: 0;
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: manipulation;
-		height: auto; /* Let tiles determine height */
+		height: auto;
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent;
 	}
