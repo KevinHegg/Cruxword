@@ -436,6 +436,7 @@
 		selectedSid = null;
 		hoverCell = null;
 		lastHoverCell = null;
+		clearShadow(); // Clear shadow after successful placement
 		
 		// Wait for DOM update
 		await tick();
