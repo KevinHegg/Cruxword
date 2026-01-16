@@ -17,8 +17,8 @@
 	let showClue = true;
 	let showClueDetails = false; // toggle between question and metadata
 	
-	// Responsive board size - use CSS calc for true responsiveness
-	let boardSize = '100%';
+	// Board size calculated dynamically based on actual element heights
+	let boardSize = '400px'; // fallback
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -108,7 +108,60 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Board sizing is now handled purely by CSS - no JS calculation needed
+		// Calculate board size based on ACTUAL measured element heights
+		const calculateBoardSize = () => {
+			// Wait for DOM to be ready
+			setTimeout(() => {
+				const headerEl = document.querySelector('.top') as HTMLElement;
+				const bankEl = document.querySelector('.bank') as HTMLElement;
+				const screenEl = document.querySelector('.screen') as HTMLElement;
+				
+				if (!headerEl || !bankEl || !screenEl) return;
+				
+				// Measure actual heights
+				const headerHeight = headerEl.offsetHeight;
+				const bankHeight = bankEl.offsetHeight;
+				const screenPadding = 20; // 10px top + 10px bottom
+				
+				// Available space
+				const vh = window.visualViewport?.height || window.innerHeight;
+				const vw = window.innerWidth;
+				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
+				const availableWidth = vw - screenPadding;
+				
+				// Board aspect ratio is 12:11 (width:height)
+				// Calculate what size fits both constraints
+				const widthBasedHeight = availableWidth * (11 / 12);
+				const heightBasedWidth = availableHeight * (12 / 11);
+				
+				// Use the smaller dimension to ensure it fits
+				let boardWidth: number;
+				if (widthBasedHeight <= availableHeight) {
+					// Width is the limiting factor
+					boardWidth = availableWidth;
+				} else {
+					// Height is the limiting factor
+					boardWidth = heightBasedWidth;
+				}
+				
+				// Ensure minimum size
+				boardWidth = Math.max(boardWidth, 300);
+				
+				// Set the size
+				boardSize = `${boardWidth}px`;
+			}, 100);
+		};
+		
+		calculateBoardSize();
+		
+		// Recalculate on resize
+		const handleResize = () => {
+			calculateBoardSize();
+		};
+		window.addEventListener('resize', handleResize);
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('resize', handleResize);
+		}
 		
 		startNewGame();
 		// any first user action hides cheat sheet
@@ -185,6 +238,10 @@
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousemove', handleMouseMove);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			window.removeEventListener('resize', handleResize);
+			if (window.visualViewport) {
+				window.visualViewport.removeEventListener('resize', handleResize);
+			}
 			if (holdTimer) {
 				clearTimeout(holdTimer);
 			}
@@ -943,7 +1000,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.09 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.10 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -981,7 +1038,7 @@
 		<div class="boardWrap">
 			<div 
 				class="board" 
-				style="--rows: 11; --cols: 12;" 
+				style="--rows: 11; --cols: 12; width: {boardSize};" 
 				aria-label="12 by 11 board"
 				on:touchmove={(e) => {
 					// Handle touchmove on board to track finger movement across cells - only if cell changed
@@ -1472,7 +1529,7 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden; /* Prevent any scrolling */
+		overflow: hidden;
 		padding: 0;
 		min-height: 0;
 	}
@@ -1489,32 +1546,19 @@
 		min-width: 0;
 		min-height: 0;
 		width: 100%;
-		overflow: hidden;
+		overflow: visible;
 		box-sizing: border-box;
-		/* Use min() to ensure board fits both width and height constraints */
-		/* Width constraint: account for screen padding (10px each side) */
-		/* Height constraint: account for header (~120px), clue (~28px), bank (~140px), screen padding (20px) = ~308px total */
-		max-width: calc(100vw - 20px);
-		max-height: calc(100vh - 308px);
-		max-height: calc(100dvh - 308px);
-	}
-	
-	/* On desktop, bank is taller */
-	@media (min-width: 769px) {
-		.boardWrap {
-			max-height: calc(100vh - 420px);
-		}
 	}
 
 	.board {
 		position: relative;
-		aspect-ratio: 12 / 11; /* 12 wide by 11 tall board - CRITICAL: must maintain this */
+		aspect-ratio: 12 / 11; /* 12 wide by 11 tall - MUST maintain this */
 		display: grid;
-		grid-template-columns: repeat(12, 1fr); /* Must show all 12 columns */
-		grid-template-rows: repeat(11, 1fr); /* Must show all 11 rows */
+		grid-template-columns: repeat(12, 1fr); /* All 12 columns visible */
+		grid-template-rows: repeat(11, 1fr); /* All 11 rows visible */
 		gap: 0;
 		border-radius: 16px;
-		overflow: hidden;
+		overflow: visible; /* Allow board to be fully visible */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1522,17 +1566,7 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Use min() to ensure board fits both dimensions - NEVER clip */
-		width: min(100%, calc((100vh - 308px) * 12 / 11), calc((100dvh - 308px) * 12 / 11));
-		width: min(100%, calc((100vw - 20px)), calc((100vh - 308px) * 12 / 11), calc((100dvh - 308px) * 12 / 11));
-		height: min(100%, calc((100vw - 20px) * 11 / 12));
-	}
-	
-	@media (min-width: 769px) {
-		.board {
-			width: min(100%, calc((100vw - 20px)), calc((100vh - 420px) * 12 / 11));
-			height: min(100%, calc((100vw - 20px) * 11 / 12), calc(100vh - 420px));
-		}
+		/* Size is set by JavaScript based on actual measurements */
 	}
 
 	/* subtle grid lines */
@@ -1752,26 +1786,20 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px 0 10px; /* ZERO top and bottom padding - only horizontal */
+		padding: 0 10px; /* ZERO vertical padding */
+		margin: 0; /* ZERO margins */
 		display: flex;
 		flex-direction: column;
-		min-height: 140px; /* Reduced to absolute minimum */
-		max-height: 140px; /* Fixed height to save space */
-	}
-	
-	/* On mobile, keep same compact size */
-	@media (max-width: 768px) {
-		.bank {
-			min-height: 140px;
-			max-height: 140px;
-		}
+		height: auto;
+		min-height: 0;
 	}
 
 	.bankHeader {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin: 2px 0 2px 0; /* Reduced vertical margins (was 4px) */
+		margin: 0; /* ZERO margins */
+		padding: 2px 0; /* Minimal vertical padding */
 		gap: 8px;
 	}
 	
@@ -1800,10 +1828,11 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 0 2px; /* ZERO vertical padding, only horizontal */
+		padding: 0 2px; /* ZERO vertical padding */
+		margin: 0; /* ZERO margins */
 		flex: 1;
-		min-height: 0; /* Let it shrink */
-		max-height: 100%; /* Fit within bank container */
+		min-height: 0;
+		height: auto;
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1831,17 +1860,11 @@
 	.bankGrid {
 		display: grid;
 		grid-auto-flow: column;
-		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
-		gap: 3px; /* Further reduced gap */
+		grid-template-rows: repeat(3, auto); /* Auto height rows - no min-height */
+		gap: 3px;
 		align-content: start;
-		min-height: 0; /* Let it shrink */
-	}
-	
-	/* On mobile, same compact size */
-	@media (max-width: 768px) {
-		.bankGrid {
-			min-height: 0;
-		}
+		margin: 0;
+		padding: 0;
 	}
 
 	.stick {
@@ -1851,11 +1874,12 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 0 6px; /* ZERO top/bottom padding - only horizontal, tiles keep their size */
+		padding: 0 6px; /* ZERO vertical padding */
+		margin: 0; /* ZERO margins */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: manipulation;
-		min-height: auto; /* Let content determine height */
+		height: auto; /* Let tiles determine height */
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent;
 	}
