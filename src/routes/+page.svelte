@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { pickRandomBag } from '$lib/bags';
 	import { bagToSticks, validateBagShape } from '$lib/game/bag';
 	import { canPlaceStick, createEmptyBoard, moveStick, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
@@ -364,7 +364,7 @@
 	}
 
 	// ---- placing via tap
-	function tapPlace(r: number, c: number): boolean {
+	async function tapPlace(r: number, c: number): Promise<boolean> {
 		if (!selectedSid) return false;
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return false;
@@ -385,20 +385,31 @@
 			return false;
 		}
 
+		// CRITICAL: Use tick() to batch the update and prevent intermediate re-renders
+		await tick();
+		
 		// Lock viewport during placement to prevent board shift
 		viewportLocked = true;
 		
 		pushHistory();
-		board = placeStick(board, stick, r, c);
+		
+		// Create new board state without touching existing sticks
+		const newBoard = placeStick(board, stick, r, c);
+		
+		// Batch all updates together
+		board = newBoard;
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
-		hoverCell = null; // Clear hover on placement
+		hoverCell = null;
 		lastHoverCell = null;
 		
-		// Unlock viewport after a brief delay
+		// Wait for DOM update
+		await tick();
+		
+		// Unlock viewport after DOM settles
 		setTimeout(() => {
 			viewportLocked = false;
-		}, 50);
+		}, 100);
 		
 		return true;
 	}
@@ -418,7 +429,7 @@
 		selectedSid = null;
 	}
 	
-	function handleCellClick(r: number, c: number, e?: MouseEvent) {
+	async function handleCellClick(r: number, c: number, e?: MouseEvent) {
 		// Prevent default to avoid text selection
 		if (e) {
 			e.preventDefault();
@@ -434,7 +445,7 @@
 		// If no stick selected or placement fails, then select the cell's stick
 		if (selectedSid) {
 			// Try to place the selected stick
-			const placed = tapPlace(r, c);
+			const placed = await tapPlace(r, c);
 			// If placement succeeded, we're done. If not, fall through to select.
 			if (placed) return;
 		}
@@ -787,16 +798,21 @@
 						const newC = firstPlaced.col + offsetC;
 						
 						// Try to move the cluster (will return true if offset is 0, preventing unnecessary moves)
-						if (moveCluster(dragState.dragCluster, newR, newC)) {
-							// Success - clear drag state
-							dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-							touchCell = null;
-							lastTouchCell = null;
-							selectedPlacedSid = null;
-							// Unlock viewport after drag
-							viewportLocked = false;
-							return;
-						}
+						moveCluster(dragState.dragCluster, newR, newC).then((success) => {
+							if (success) {
+								// Success - clear drag state
+								dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+								touchCell = null;
+								lastTouchCell = null;
+								selectedPlacedSid = null;
+								// Unlock viewport after drag
+								viewportLocked = false;
+							} else {
+								// Failed - unlock anyway
+								viewportLocked = false;
+							}
+						});
+						return;
 					}
 				}
 			}
@@ -892,7 +908,7 @@
 	// Move a cluster of sticks to a new position
 	// CRITICAL: This function should ONLY be called when dragging PLACED sticks
 	// It should NEVER be called when placing NEW sticks from the bag
-	function moveCluster(clusterSids: string[], newRow: number, newCol: number): boolean {
+	async function moveCluster(clusterSids: string[], newRow: number, newCol: number): Promise<boolean> {
 		if (clusterSids.length === 0) return false;
 		
 		// CRITICAL: Verify all sticks in cluster are actually placed
@@ -940,15 +956,25 @@
 			tempBoard = placeStick(tempBoard, tempStick, newR, newC);
 		}
 		
-		// All checks passed, apply the move
+		// All checks passed, apply the move in a single batch
+		await tick();
+		
 		pushHistory();
+		
+		// Apply all moves in one go to prevent intermediate re-renders
+		let newBoard = board;
 		for (const sid of clusterSids) {
-			const placed = board.placed[sid];
+			const placed = newBoard.placed[sid];
 			if (!placed) continue;
 			const newR = placed.row + rowOffset;
 			const newC = placed.col + colOffset;
-			board = moveStick(board, sid, newR, newC);
+			newBoard = moveStick(newBoard, sid, newR, newC);
 		}
+		
+		// Single state update
+		board = newBoard;
+		
+		await tick();
 		
 		return true;
 	}
