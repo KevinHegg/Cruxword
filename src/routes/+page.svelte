@@ -64,6 +64,9 @@
 	};
 	let holdTimer: ReturnType<typeof setTimeout> | null = null;
 	const HOLD_DELAY = 200; // ms to hold before drag starts
+	
+	// Lock viewport during drag to prevent board shifting
+	let viewportLocked = false;
 
 	// UI computed
 	$: filledCells = countFilled(board);
@@ -110,8 +113,14 @@
 		
 		// Calculate board size based on ACTUAL measured element heights
 		const calculateBoardSize = () => {
+			// Don't recalculate during drag - freeze board position
+			if (viewportLocked || dragState.isDragging) return;
+			
 			// Wait for DOM to be ready
 			setTimeout(() => {
+				// Double-check we're not in drag state
+				if (viewportLocked || dragState.isDragging) return;
+				
 				const headerEl = document.querySelector('.top') as HTMLElement;
 				const bankEl = document.querySelector('.bank') as HTMLElement;
 				const screenEl = document.querySelector('.screen') as HTMLElement;
@@ -154,9 +163,11 @@
 		
 		calculateBoardSize();
 		
-		// Recalculate on resize
+		// Recalculate on resize - but not during drag
 		const handleResize = () => {
-			calculateBoardSize();
+			if (!viewportLocked && !dragState.isDragging) {
+				calculateBoardSize();
+			}
 		};
 		window.addEventListener('resize', handleResize);
 		if (window.visualViewport) {
@@ -358,6 +369,9 @@
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return false;
 		
+		// CRITICAL: Never place if we're dragging a placed stick
+		if (dragState.isDragging) return false;
+		
 		// Bounds check
 		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return false;
 
@@ -371,12 +385,21 @@
 			return false;
 		}
 
+		// Lock viewport during placement to prevent board shift
+		viewportLocked = true;
+		
 		pushHistory();
 		board = placeStick(board, stick, r, c);
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
 		hoverCell = null; // Clear hover on placement
 		lastHoverCell = null;
+		
+		// Unlock viewport after a brief delay
+		setTimeout(() => {
+			viewportLocked = false;
+		}, 50);
+		
 		return true;
 	}
 
@@ -497,6 +520,8 @@
 					hoverCell = { r, c }; // Initialize hover cell
 					lastHoverCell = { r, c };
 					holdTimer = null;
+					// Lock viewport during drag to prevent board shifting
+					viewportLocked = true;
 				}, HOLD_DELAY);
 			}
 		}
@@ -640,21 +665,23 @@
 			const stick = sticks.find(s => s.sid === sidToDrag);
 			if (stick && stick.placed) {
 				// Start hold timer for drag
-				holdTimer = setTimeout(() => {
-					// Hold completed - start drag
-					const cluster = findCluster(sidToDrag);
-					dragState = {
-						isDragging: true,
-						dragSid: sidToDrag,
-						dragStartCell: { r, c },
-						dragCluster: cluster
-					};
-					selectedPlacedSid = sidToDrag;
-					selectedSid = null; // Clear bag selection
-					touchCell = { r, c }; // Initialize touch cell
-					lastTouchCell = { r, c };
-					holdTimer = null;
-				}, HOLD_DELAY);
+					holdTimer = setTimeout(() => {
+						// Hold completed - start drag
+						const cluster = findCluster(sidToDrag);
+						dragState = {
+							isDragging: true,
+							dragSid: sidToDrag,
+							dragStartCell: { r, c },
+							dragCluster: cluster
+						};
+						selectedPlacedSid = sidToDrag;
+						selectedSid = null; // Clear bag selection
+						touchCell = { r, c }; // Initialize touch cell
+						lastTouchCell = { r, c };
+						holdTimer = null;
+						// Lock viewport during drag to prevent board shifting
+						viewportLocked = true;
+					}, HOLD_DELAY);
 			}
 		}
 	}
@@ -766,6 +793,8 @@
 							touchCell = null;
 							lastTouchCell = null;
 							selectedPlacedSid = null;
+							// Unlock viewport after drag
+							viewportLocked = false;
 							return;
 						}
 					}
@@ -774,6 +803,7 @@
 			
 			// Drag failed or cancelled - clear drag state
 			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+			viewportLocked = false;
 		}
 		
 		// Clear touch tracking
@@ -860,8 +890,19 @@
 	}
 	
 	// Move a cluster of sticks to a new position
+	// CRITICAL: This function should ONLY be called when dragging PLACED sticks
+	// It should NEVER be called when placing NEW sticks from the bag
 	function moveCluster(clusterSids: string[], newRow: number, newCol: number): boolean {
 		if (clusterSids.length === 0) return false;
+		
+		// CRITICAL: Verify all sticks in cluster are actually placed
+		for (const sid of clusterSids) {
+			const stick = sticks.find(s => s.sid === sid);
+			if (!stick || !stick.placed) {
+				// Can't move unplaced sticks - this should never happen
+				return false;
+			}
+		}
 		
 		// Get the first stick's original position to calculate offset
 		const firstSid = clusterSids[0];
@@ -873,7 +914,7 @@
 		
 		// CRITICAL: If offset is zero, don't move anything - sticks are already in place
 		if (rowOffset === 0 && colOffset === 0) {
-			return true; // Already in correct position
+			return true; // Already in correct position - no movement needed
 		}
 		
 		// Check if all sticks can be moved
@@ -1030,7 +1071,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.12 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.13 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1579,6 +1620,9 @@
 		width: 100%;
 		overflow: visible;
 		box-sizing: border-box;
+		/* Freeze position during drag to prevent shifting */
+		will-change: auto;
+		transform: translateZ(0); /* Force GPU acceleration for stability */
 	}
 
 	.board {
@@ -1598,6 +1642,10 @@
 		margin: 0 auto;
 		box-sizing: border-box;
 		/* Size is set by JavaScript based on actual measurements */
+		/* Freeze board position - prevent any shifting */
+		will-change: auto;
+		transform: translateZ(0); /* Force GPU layer for stability */
+		backface-visibility: hidden; /* Prevent visual glitches */
 	}
 
 	/* subtle grid lines */
