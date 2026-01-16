@@ -849,17 +849,23 @@
 			lastTapCell = null;
 		} else {
 			// Single tap: if stick selected, try to place at FINAL cell position
-			if (selectedSid) {
-				const placed = tapPlace(finalCell.r, finalCell.c);
-				if (placed) {
-					lastTapTime = 0;
-					lastTapCell = null;
+			// CRITICAL: Only place if NOT dragging a placed stick
+			if (selectedSid && !dragState.isDragging) {
+				const selectedStick = sticks.find(s => s.sid === selectedSid);
+				// Only place if it's an unplaced stick from the bag
+				if (selectedStick && !selectedStick.placed) {
+					tapPlace(finalCell.r, finalCell.c).then((placed) => {
+						if (placed) {
+							lastTapTime = 0;
+							lastTapCell = null;
+						}
+					});
 					return;
 				}
 			}
 			
-			// If cell has content, select its stick
-			if (board.cells[finalCell.r][finalCell.c]) {
+			// If cell has content, select its stick (only if not dragging)
+			if (!dragState.isDragging && board.cells[finalCell.r][finalCell.c]) {
 				tapCellSelect(finalCell.r, finalCell.c);
 			}
 			
@@ -1097,7 +1103,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.13 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.14 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1646,9 +1652,10 @@
 		width: 100%;
 		overflow: visible;
 		box-sizing: border-box;
-		/* Freeze position during drag to prevent shifting */
-		will-change: auto;
-		transform: translateZ(0); /* Force GPU acceleration for stability */
+		/* Freeze position - prevent any layout shifts */
+		contain: layout style paint; /* Isolate layout calculations */
+		transform: translateZ(0); /* Force GPU layer */
+		backface-visibility: hidden; /* Prevent visual glitches */
 	}
 
 	.board {
@@ -1668,10 +1675,11 @@
 		margin: 0 auto;
 		box-sizing: border-box;
 		/* Size is set by JavaScript based on actual measurements */
-		/* Freeze board position - prevent any shifting */
-		will-change: auto;
-		transform: translateZ(0); /* Force GPU layer for stability */
+		/* CRITICAL: Isolate board from layout changes */
+		contain: layout style paint; /* Prevent layout shifts from affecting board */
+		transform: translateZ(0); /* Force GPU layer - prevents reflows */
 		backface-visibility: hidden; /* Prevent visual glitches */
+		isolation: isolate; /* Create new stacking context */
 	}
 
 	/* subtle grid lines */
@@ -1689,6 +1697,8 @@
 		z-index: 1; /* Base z-index for regular cells */
 		transition: opacity 0.1s ease, transform 0.1s ease;
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
+		/* Prevent cell from causing layout shifts */
+		contain: layout style; /* Isolate cell layout */
 	}
 	
 	.cell:active {
