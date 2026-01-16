@@ -660,6 +660,7 @@
 	}
 	
 	function handleCellTouchMove(r: number, c: number, e: TouchEvent) {
+		// CRITICAL: Always prevent default to stop zoom/scroll
 		e.preventDefault();
 		e.stopPropagation();
 		
@@ -741,28 +742,32 @@
 		// Use touchCell if available (most recent tracked position), otherwise use endCell
 		const finalCell = touchCell || endCell;
 		
-		// Handle drag end
-		if (dragState.isDragging && finalCell) {
-			// Calculate offset from drag start
-			if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
-				const offsetR = finalCell.r - dragState.dragStartCell.r;
-				const offsetC = finalCell.c - dragState.dragStartCell.c;
-				
-				// Get first stick's position
-				const firstSid = dragState.dragCluster[0];
-				const firstPlaced = board.placed[firstSid];
-				if (firstPlaced) {
-					const newR = firstPlaced.row + offsetR;
-					const newC = firstPlaced.col + offsetC;
+		// Handle drag end - ONLY if actually dragging a PLACED stick
+		if (dragState.isDragging && finalCell && dragState.dragSid) {
+			// Verify we're dragging a placed stick, not placing a new one
+			const draggedStick = sticks.find(s => s.sid === dragState.dragSid);
+			if (draggedStick && draggedStick.placed) {
+				// Calculate offset from drag start
+				if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
+					const offsetR = finalCell.r - dragState.dragStartCell.r;
+					const offsetC = finalCell.c - dragState.dragStartCell.c;
 					
-					// Try to move the cluster
-					if (moveCluster(dragState.dragCluster, newR, newC)) {
-						// Success - clear drag state
-						dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-						touchCell = null;
-						lastTouchCell = null;
-						selectedPlacedSid = null;
-						return;
+					// Get first stick's position
+					const firstSid = dragState.dragCluster[0];
+					const firstPlaced = board.placed[firstSid];
+					if (firstPlaced) {
+						const newR = firstPlaced.row + offsetR;
+						const newC = firstPlaced.col + offsetC;
+						
+						// Try to move the cluster (will return true if offset is 0, preventing unnecessary moves)
+						if (moveCluster(dragState.dragCluster, newR, newC)) {
+							// Success - clear drag state
+							dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+							touchCell = null;
+							lastTouchCell = null;
+							selectedPlacedSid = null;
+							return;
+						}
 					}
 				}
 			}
@@ -865,6 +870,11 @@
 		
 		const rowOffset = newRow - firstPlaced.row;
 		const colOffset = newCol - firstPlaced.col;
+		
+		// CRITICAL: If offset is zero, don't move anything - sticks are already in place
+		if (rowOffset === 0 && colOffset === 0) {
+			return true; // Already in correct position
+		}
 		
 		// Check if all sticks can be moved
 		let tempBoard = structuredClone(board);
@@ -1020,7 +1030,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.11 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.12 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1061,9 +1071,10 @@
 				style="--rows: 11; --cols: 12; width: {boardSize};" 
 				aria-label="12 by 11 board"
 				on:touchmove={(e) => {
+					// CRITICAL: Always prevent default to stop zoom
+					e.preventDefault();
 					// Handle touchmove on board to track finger movement across cells - only if cell changed
 					if (selectedSid && e.touches.length > 0) {
-						e.preventDefault();
 						const touch = e.touches[0];
 						const element = document.elementFromPoint(touch.clientX, touch.clientY);
 						if (element) {
@@ -1382,8 +1393,8 @@
 		max-width: 100vw;
 		width: 100%;
 		margin: 0 auto;
-		touch-action: manipulation; /* helps prevent double-tap zoom */
-		overflow-x: visible; /* Changed from hidden to visible to prevent board clipping */
+		touch-action: none; /* Prevent all touch gestures including zoom/pan */
+		overflow-x: visible;
 		height: 100vh;
 		height: 100dvh; /* dynamic viewport height for mobile */
 		display: flex;
@@ -1597,7 +1608,7 @@
 		border-bottom: 1px solid rgba(255,255,255,0.06);
 		user-select: none;
 		-webkit-user-select: none;
-		touch-action: manipulation;
+		touch-action: none; /* Prevent zoom/pan on cells */
 		cursor: pointer; /* show it's clickable */
 		aspect-ratio: 1 / 1; /* ensure square tiles */
 		position: relative;
@@ -1806,7 +1817,10 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 4px 10px; /* Small top/bottom padding */
+		padding-top: 6px !important;
+		padding-bottom: 6px !important;
+		padding-left: 10px;
+		padding-right: 10px;
 		margin: 0;
 		display: flex;
 		flex-direction: column;
@@ -1819,7 +1833,10 @@
 		align-items: center;
 		justify-content: space-between;
 		margin: 0;
-		padding: 4px 0; /* Small top/bottom padding */
+		padding-top: 6px !important;
+		padding-bottom: 6px !important;
+		padding-left: 0;
+		padding-right: 0;
 		gap: 8px;
 	}
 	
@@ -1848,7 +1865,10 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 2px; /* Small padding all around */
+		padding-top: 4px !important;
+		padding-bottom: 4px !important;
+		padding-left: 2px;
+		padding-right: 2px;
 		margin: 0;
 		flex: 1;
 		min-height: 0;
@@ -1894,7 +1914,10 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 2px 6px; /* Small top/bottom padding */
+		padding-top: 4px !important;
+		padding-bottom: 4px !important;
+		padding-left: 6px;
+		padding-right: 6px;
 		margin: 0;
 		user-select: none;
 		-webkit-user-select: none;
