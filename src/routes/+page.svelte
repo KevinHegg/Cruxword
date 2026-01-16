@@ -406,6 +406,13 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
+		// CRITICAL: Don't start drag if we have a new stick selected from bag
+		// Only allow dragging of PLACED sticks, not new sticks being placed
+		if (selectedSid) {
+			// User is trying to place a new stick - don't start drag
+			return;
+		}
+		
 		// Clear any existing drag state
 		if (dragState.isDragging) {
 			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
@@ -414,23 +421,27 @@
 		// Check if there's a placed stick at this cell
 		const cell = board.cells[r][c];
 		if (cell && cell.stickIds.length > 0) {
-			// Start hold timer for drag
+			// Verify this stick is actually placed (not just selected from bag)
 			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
-			holdTimer = setTimeout(() => {
-				// Hold completed - start drag
-				const cluster = findCluster(sidToDrag);
-				dragState = {
-					isDragging: true,
-					dragSid: sidToDrag,
-					dragStartCell: { r, c },
-					dragCluster: cluster
-				};
-				selectedPlacedSid = sidToDrag;
-				selectedSid = null; // Clear bag selection
-				hoverCell = { r, c }; // Initialize hover cell
-				lastHoverCell = { r, c };
-				holdTimer = null;
-			}, HOLD_DELAY);
+			const stick = sticks.find(s => s.sid === sidToDrag);
+			if (stick && stick.placed) {
+				// Start hold timer for drag
+				holdTimer = setTimeout(() => {
+					// Hold completed - start drag
+					const cluster = findCluster(sidToDrag);
+					dragState = {
+						isDragging: true,
+						dragSid: sidToDrag,
+						dragStartCell: { r, c },
+						dragCluster: cluster
+					};
+					selectedPlacedSid = sidToDrag;
+					selectedSid = null; // Clear bag selection
+					hoverCell = { r, c }; // Initialize hover cell
+					lastHoverCell = { r, c };
+					holdTimer = null;
+				}, HOLD_DELAY);
+			}
 		}
 	}
 	
@@ -544,6 +555,15 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
+		// CRITICAL: Don't start drag if we have a new stick selected from bag
+		// Only allow dragging of PLACED sticks, not new sticks being placed
+		if (selectedSid) {
+			// User is trying to place a new stick - just track position for preview
+			touchCell = { r, c };
+			lastTouchCell = { r, c };
+			return;
+		}
+		
 		// Clear any existing hold timer
 		if (holdTimer) {
 			clearTimeout(holdTimer);
@@ -558,27 +578,27 @@
 		// Check if there's a placed stick at this cell
 		const cell = board.cells[r][c];
 		if (cell && cell.stickIds.length > 0) {
-			// Start hold timer for drag
+			// Verify this stick is actually placed (not just selected from bag)
 			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
-			holdTimer = setTimeout(() => {
-				// Hold completed - start drag
-				const cluster = findCluster(sidToDrag);
-				dragState = {
-					isDragging: true,
-					dragSid: sidToDrag,
-					dragStartCell: { r, c },
-					dragCluster: cluster
-				};
-				selectedPlacedSid = sidToDrag;
-				selectedSid = null; // Clear bag selection
-				touchCell = { r, c }; // Initialize touch cell
-				lastTouchCell = { r, c };
-				holdTimer = null;
-			}, HOLD_DELAY);
-		} else if (selectedSid) {
-			// Track touch position for shadow preview (unplaced stick from bag)
-			touchCell = { r, c };
-			lastTouchCell = { r, c };
+			const stick = sticks.find(s => s.sid === sidToDrag);
+			if (stick && stick.placed) {
+				// Start hold timer for drag
+				holdTimer = setTimeout(() => {
+					// Hold completed - start drag
+					const cluster = findCluster(sidToDrag);
+					dragState = {
+						isDragging: true,
+						dragSid: sidToDrag,
+						dragStartCell: { r, c },
+						dragCluster: cluster
+					};
+					selectedPlacedSid = sidToDrag;
+					selectedSid = null; // Clear bag selection
+					touchCell = { r, c }; // Initialize touch cell
+					lastTouchCell = { r, c };
+					holdTimer = null;
+				}, HOLD_DELAY);
+			}
 		}
 	}
 	
@@ -923,7 +943,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.07 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.08 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1470,22 +1490,21 @@
 		justify-content: flex-start;
 		margin: 0 auto;
 		width: 100%;
-		max-width: 100%;
-		overflow: visible;
+		overflow: hidden; /* Prevent clipping */
 		min-width: 0;
 		flex: 1 1 0; /* Take available space */
 		/* Constrain board width to fit container, accounting for padding */
 		max-width: calc(100vw - 20px); /* 10px padding each side */
 		/* Constrain board height based on available vertical space */
-		max-height: calc(100vh - 280px); /* Reserve space for header, clue, bank */
-		max-height: calc(100dvh - 280px); /* Use dynamic viewport height on mobile */
+		max-height: calc(100vh - 260px); /* Reserve space for header, clue, bank (reduced from 280px) */
+		max-height: calc(100dvh - 260px); /* Use dynamic viewport height on mobile */
 		box-sizing: border-box;
 	}
 	
 	/* On desktop, allow larger board */
 	@media (min-width: 769px) {
 		.boardWrap {
-			max-height: calc(100vh - 400px);
+			max-height: calc(100vh - 380px); /* Reduced from 400px */
 		}
 	}
 
@@ -1497,7 +1516,7 @@
 		grid-template-rows: repeat(11, 1fr);
 		gap: 0; /* no padding between cells */
 		border-radius: 16px;
-		overflow: visible; /* Changed from hidden to visible to prevent clipping */
+		overflow: hidden; /* Prevent board from clipping outside container */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1506,6 +1525,7 @@
 		margin: 0 auto;
 		width: 100%;
 		max-width: 100%;
+		max-height: 100%; /* Ensure board doesn't exceed container */
 		/* Board will size based on container - boardWrap controls the size */
 		box-sizing: border-box;
 	}
@@ -1727,18 +1747,18 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px 4px 10px; /* further reduced bottom padding */
+		padding: 0 10px 2px 10px; /* Further reduced bottom padding (was 4px) */
 		display: flex;
 		flex-direction: column;
-		min-height: 160px; /* Increased to show more rows on mobile */
-		max-height: 180px; /* Increased to show more rows on mobile */
+		min-height: 150px; /* Reduced (was 160px) */
+		max-height: 170px; /* Reduced (was 180px) */
 	}
 	
 	/* On mobile, ensure bank is tall enough to show multiple rows */
 	@media (max-width: 768px) {
 		.bank {
-			min-height: 180px;
-			max-height: 200px;
+			min-height: 170px; /* Reduced (was 180px) */
+			max-height: 190px; /* Reduced (was 200px) */
 		}
 	}
 
@@ -1775,10 +1795,10 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 4px; /* further reduced padding */
+		padding: 2px; /* Further reduced padding (was 4px) */
 		flex: 1;
-		min-height: 160px; /* Increased to show more rows on mobile */
-		max-height: 180px; /* Increased to show more rows on mobile */
+		min-height: 150px; /* Reduced (was 160px) */
+		max-height: 170px; /* Reduced (was 180px) */
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1807,15 +1827,15 @@
 		display: grid;
 		grid-auto-flow: column;
 		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
-		gap: 5px; /* further reduced gap */
+		gap: 4px; /* Further reduced gap (was 5px) */
 		align-content: start;
-		min-height: 160px; /* Increased to show more rows on mobile */
+		min-height: 150px; /* Reduced (was 160px) */
 	}
 	
 	/* On mobile, ensure grid shows multiple rows */
 	@media (max-width: 768px) {
 		.bankGrid {
-			min-height: 180px;
+			min-height: 170px; /* Reduced (was 180px) */
 		}
 	}
 
@@ -1826,11 +1846,11 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 2px 6px; /* reduced top/bottom padding to make room for board */
+		padding: 1px 6px; /* Further reduced top/bottom padding (was 2px) */
 		user-select: none;
 		-webkit-user-select: none;
 		touch-action: manipulation; /* optimized for touch */
-		min-height: 20px; /* reduced height */
+		min-height: 18px; /* Further reduced height (was 20px) */
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
 	}
@@ -1888,13 +1908,13 @@
 	}
 
 	.tile {
-		width: 24px; /* reduced by 1px from 25px for better fit */
-		height: 24px; /* reduced by 1px from 25px for better fit */
+		width: 22px; /* Further reduced (was 24px) */
+		height: 22px; /* Further reduced (was 24px) */
 		border-radius: 6px;
 		display: grid;
 		place-items: center;
 		font-weight: 900;
-		font-size: 13px; /* slightly larger font */
+		font-size: 12px; /* Slightly smaller font to fit */
 		background: rgba(255,255,255,0.08);
 		border: 1px solid rgba(255,255,255,0.10);
 	}
