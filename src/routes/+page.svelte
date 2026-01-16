@@ -943,7 +943,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.08 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.09 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1472,13 +1472,9 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		overflow-y: auto;
-		overflow-x: visible; /* Changed from hidden to visible to prevent right-side clipping */
+		overflow: hidden; /* Prevent any scrolling */
 		padding: 0;
 		min-height: 0;
-		/* Prevent clipping on right and bottom */
-		padding-right: 0;
-		padding-bottom: 0;
 	}
 
 	.boardWrap {
@@ -1487,47 +1483,56 @@
 		flex-direction: column;
 		padding: 0;
 		align-items: center;
-		justify-content: flex-start;
+		justify-content: center;
 		margin: 0 auto;
-		width: 100%;
-		overflow: hidden; /* Prevent clipping */
+		flex: 1 1 0;
 		min-width: 0;
-		flex: 1 1 0; /* Take available space */
-		/* Constrain board width to fit container, accounting for padding */
-		max-width: calc(100vw - 20px); /* 10px padding each side */
-		/* Constrain board height based on available vertical space */
-		max-height: calc(100vh - 260px); /* Reserve space for header, clue, bank (reduced from 280px) */
-		max-height: calc(100dvh - 260px); /* Use dynamic viewport height on mobile */
+		min-height: 0;
+		width: 100%;
+		overflow: hidden;
 		box-sizing: border-box;
+		/* Use min() to ensure board fits both width and height constraints */
+		/* Width constraint: account for screen padding (10px each side) */
+		/* Height constraint: account for header (~120px), clue (~28px), bank (~140px), screen padding (20px) = ~308px total */
+		max-width: calc(100vw - 20px);
+		max-height: calc(100vh - 308px);
+		max-height: calc(100dvh - 308px);
 	}
 	
-	/* On desktop, allow larger board */
+	/* On desktop, bank is taller */
 	@media (min-width: 769px) {
 		.boardWrap {
-			max-height: calc(100vh - 380px); /* Reduced from 400px */
+			max-height: calc(100vh - 420px);
 		}
 	}
 
 	.board {
 		position: relative;
-		aspect-ratio: 12 / 11; /* 12 wide by 11 tall board */
+		aspect-ratio: 12 / 11; /* 12 wide by 11 tall board - CRITICAL: must maintain this */
 		display: grid;
-		grid-template-columns: repeat(12, 1fr);
-		grid-template-rows: repeat(11, 1fr);
-		gap: 0; /* no padding between cells */
+		grid-template-columns: repeat(12, 1fr); /* Must show all 12 columns */
+		grid-template-rows: repeat(11, 1fr); /* Must show all 11 rows */
+		gap: 0;
 		border-radius: 16px;
-		overflow: hidden; /* Prevent board from clipping outside container */
+		overflow: hidden;
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
 			radial-gradient(circle at 70% 75%, rgba(200, 140, 255, 0.12), transparent 50%),
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
-		width: 100%;
-		max-width: 100%;
-		max-height: 100%; /* Ensure board doesn't exceed container */
-		/* Board will size based on container - boardWrap controls the size */
 		box-sizing: border-box;
+		/* Use min() to ensure board fits both dimensions - NEVER clip */
+		width: min(100%, calc((100vh - 308px) * 12 / 11), calc((100dvh - 308px) * 12 / 11));
+		width: min(100%, calc((100vw - 20px)), calc((100vh - 308px) * 12 / 11), calc((100dvh - 308px) * 12 / 11));
+		height: min(100%, calc((100vw - 20px) * 11 / 12));
+	}
+	
+	@media (min-width: 769px) {
+		.board {
+			width: min(100%, calc((100vw - 20px)), calc((100vh - 420px) * 12 / 11));
+			height: min(100%, calc((100vw - 20px) * 11 / 12), calc(100vh - 420px));
+		}
 	}
 
 	/* subtle grid lines */
@@ -1747,18 +1752,18 @@
 
 	.bank {
 		flex-shrink: 0;
-		padding: 0 10px 2px 10px; /* Further reduced bottom padding (was 4px) */
+		padding: 0 10px 0 10px; /* ZERO top and bottom padding - only horizontal */
 		display: flex;
 		flex-direction: column;
-		min-height: 150px; /* Reduced (was 160px) */
-		max-height: 170px; /* Reduced (was 180px) */
+		min-height: 140px; /* Reduced to absolute minimum */
+		max-height: 140px; /* Fixed height to save space */
 	}
 	
-	/* On mobile, ensure bank is tall enough to show multiple rows */
+	/* On mobile, keep same compact size */
 	@media (max-width: 768px) {
 		.bank {
-			min-height: 170px; /* Reduced (was 180px) */
-			max-height: 190px; /* Reduced (was 200px) */
+			min-height: 140px;
+			max-height: 140px;
 		}
 	}
 
@@ -1766,7 +1771,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin: 4px 0 4px 0;
+		margin: 2px 0 2px 0; /* Reduced vertical margins (was 4px) */
 		gap: 8px;
 	}
 	
@@ -1795,10 +1800,10 @@
 		border-radius: 14px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.04);
-		padding: 2px; /* Further reduced padding (was 4px) */
+		padding: 0 2px; /* ZERO vertical padding, only horizontal */
 		flex: 1;
-		min-height: 150px; /* Reduced (was 160px) */
-		max-height: 170px; /* Reduced (was 180px) */
+		min-height: 0; /* Let it shrink */
+		max-height: 100%; /* Fit within bank container */
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -1827,15 +1832,15 @@
 		display: grid;
 		grid-auto-flow: column;
 		grid-template-rows: repeat(3, 1fr); /* three equal height rows */
-		gap: 4px; /* Further reduced gap (was 5px) */
+		gap: 3px; /* Further reduced gap */
 		align-content: start;
-		min-height: 150px; /* Reduced (was 160px) */
+		min-height: 0; /* Let it shrink */
 	}
 	
-	/* On mobile, ensure grid shows multiple rows */
+	/* On mobile, same compact size */
 	@media (max-width: 768px) {
 		.bankGrid {
-			min-height: 170px; /* Reduced (was 180px) */
+			min-height: 0;
 		}
 	}
 
@@ -1846,13 +1851,13 @@
 		border-radius: 12px;
 		border: 1px solid rgba(255,255,255,0.12);
 		background: rgba(255,255,255,0.06);
-		padding: 1px 6px; /* Further reduced top/bottom padding (was 2px) */
+		padding: 0 6px; /* ZERO top/bottom padding - only horizontal, tiles keep their size */
 		user-select: none;
 		-webkit-user-select: none;
-		touch-action: manipulation; /* optimized for touch */
-		min-height: 18px; /* Further reduced height (was 20px) */
+		touch-action: manipulation;
+		min-height: auto; /* Let content determine height */
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
-		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
+		-webkit-tap-highlight-color: transparent;
 	}
 	
 	.stick:active {
@@ -1905,16 +1910,18 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
+		margin: 0; /* Remove any default margins */
+		padding: 0; /* Remove any default padding */
 	}
 
 	.tile {
-		width: 22px; /* Further reduced (was 24px) */
-		height: 22px; /* Further reduced (was 24px) */
+		width: 24px; /* Keep original size - user said keep text blocks same size */
+		height: 24px; /* Keep original size */
 		border-radius: 6px;
 		display: grid;
 		place-items: center;
 		font-weight: 900;
-		font-size: 12px; /* Slightly smaller font to fit */
+		font-size: 13px; /* Keep original font size */
 		background: rgba(255,255,255,0.08);
 		border: 1px solid rgba(255,255,255,0.10);
 	}
