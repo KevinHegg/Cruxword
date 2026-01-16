@@ -132,11 +132,12 @@
 				const bankHeight = bankEl.offsetHeight;
 				const screenPadding = 20; // 10px top + 10px bottom
 				
-				// Available space
+				// Available space - add small buffer to prevent clipping
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.innerWidth;
-				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - screenPadding;
+				const buffer = 4; // Small buffer to prevent clipping
+				const availableHeight = vh - headerHeight - bankHeight - screenPadding - buffer;
+				const availableWidth = vw - screenPadding - buffer;
 				
 				// Board aspect ratio is 12:11 (width:height)
 				// Calculate what size fits both constraints
@@ -1103,7 +1104,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.14 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.15 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1209,6 +1210,7 @@
 				{/each}
 
 				<!-- Shadow preview when stick is selected and hovering/touching over board -->
+				<!-- CRITICAL: Shadows are absolutely positioned overlays, NOT grid children -->
 				{#if (selectedSid || dragState.isDragging) && (hoverCell || touchCell)}
 					{@const previewCell = hoverCell || touchCell}
 					{#if dragState.isDragging && dragState.dragCluster.length > 0}
@@ -1236,8 +1238,8 @@
 										})()}
 										{@const canPlace = canPlaceStick(tempBoard, tempStick, newR, newC, bag.constraints.max_intersections_per_wordpair)}
 										<div 
-											class="cell shadow {canPlace.ok ? 'shadowValid' : 'shadowInvalid'}"
-											style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+											class="shadowOverlay {canPlace.ok ? 'shadowValid' : 'shadowInvalid'}"
+											style="--row: {shadowR}; --col: {shadowC};"
 										>
 											<span class="letter shadowLetter">{placed.text[i]}</span>
 										</div>
@@ -1257,8 +1259,8 @@
 									{@const shadowC = previewCell.c + dc * i}
 									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
 										<div 
-											class="cell shadow shadowValid"
-											style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+											class="shadowOverlay shadowValid"
+											style="--row: {shadowR}; --col: {shadowC};"
 										>
 											<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 										</div>
@@ -1272,8 +1274,8 @@
 										{@const shadowC = previewCell.c + dc * i}
 										{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
 											<div 
-												class="cell shadow shadowInvalid"
-												style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+												class="shadowOverlay shadowInvalid"
+												style="--row: {shadowR}; --col: {shadowC};"
 											>
 												<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 											</div>
@@ -1728,26 +1730,35 @@
 		letter-spacing: 0.7px;
 	}
 
-	/* Shadow preview for drag placement - rendered as grid children that overlay */
-	.cell.shadow {
-		position: relative;
+	/* Shadow preview for drag placement - CRITICAL: Absolutely positioned overlays, NOT grid children */
+	/* This prevents shadows from affecting grid layout and causing tile movement */
+	.shadowOverlay {
+		position: absolute;
+		/* Position using CSS custom properties and calc() based on grid cell size */
+		top: calc(var(--row) * (100% / 11));
+		left: calc(var(--col) * (100% / 12));
+		width: calc(100% / 12);
+		height: calc(100% / 11);
 		z-index: 50; /* Higher than regular cells to overlay */
-		pointer-events: none;
-		opacity: 0.6; /* More subtle - reduced from 0.95 */
-		margin: 0;
+		pointer-events: none; /* Don't block interactions */
+		opacity: 0.6; /* More subtle */
+		display: grid;
+		place-items: center;
 		border-right: 1px solid rgba(255,255,255,0.06);
 		border-bottom: 1px solid rgba(255,255,255,0.06);
-		/* Shadows are rendered after regular cells, so they overlay with z-index */
+		box-sizing: border-box;
+		/* CRITICAL: Shadows don't affect layout */
+		contain: layout style paint; /* Isolate from layout */
 	}
 
-	.cell.shadowValid {
+	.shadowOverlay.shadowValid {
 		outline: 1px solid rgba(132, 255, 160, 0.5); /* More subtle - reduced opacity */
 		outline-offset: -1px;
 		background: rgba(132, 255, 160, 0.1); /* More subtle background */
 		box-shadow: 0 0 2px rgba(132, 255, 160, 0.3); /* Subtle glow */
 	}
 
-	.cell.shadowInvalid {
+	.shadowOverlay.shadowInvalid {
 		outline: 1px solid rgba(255, 100, 100, 0.5); /* More subtle red */
 		outline-offset: -1px;
 		background: rgba(255, 100, 100, 0.15); /* More subtle red background */
