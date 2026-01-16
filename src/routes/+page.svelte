@@ -1921,7 +1921,7 @@
 		margin: 0;
 		user-select: none;
 		-webkit-user-select: none;
-		touch-action: manipulation;
+		touch-action: none; /* Prevent zoom/pan on sticks */
 		height: auto;
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent;
