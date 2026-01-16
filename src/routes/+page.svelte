@@ -34,6 +34,11 @@
 	let lastHoverCell: { r: number; c: number } | null = null; // last cell that showed shadow (to prevent flicker)
 	let lastTouchCell: { r: number; c: number } | null = null; // last cell touched (to prevent flicker on touch)
 	
+	// Two-tap placement model: shadow state
+	let shadowCell: { r: number; c: number } | null = null; // cell where shadow is shown (for two-tap placement)
+	let shadowTimer: ReturnType<typeof setTimeout> | null = null; // timer to auto-remove shadow after 5 seconds
+	const SHADOW_TIMEOUT = 5000; // 5 seconds
+	
 	// Custom cursor for dragging stick
 	let dragCursor: string | null = null; // First letter of selected stick for cursor
 	let mouseX = 0;
@@ -132,10 +137,10 @@
 				const bankHeight = bankEl.offsetHeight;
 				const screenPadding = 20; // 10px top + 10px bottom
 				
-				// Available space - add small buffer to prevent clipping
+				// Available space - increase buffer to prevent clipping on right side
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.innerWidth;
-				const buffer = 4; // Small buffer to prevent clipping
+				const buffer = 8; // Increased buffer to prevent clipping (was 4)
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding - buffer;
 				const availableWidth = vw - screenPadding - buffer;
 				
@@ -257,6 +262,9 @@
 			if (holdTimer) {
 				clearTimeout(holdTimer);
 			}
+			if (shadowTimer) {
+				clearTimeout(shadowTimer);
+			}
 		};
 	});
 
@@ -345,6 +353,31 @@
 	function selectStick(sid: string) {
 		selectedPlacedSid = null;
 		selectedSid = sid;
+		// Clear shadow when selecting new stick
+		clearShadow();
+	}
+	
+	// Clear shadow and timer
+	function clearShadow() {
+		if (shadowTimer) {
+			clearTimeout(shadowTimer);
+			shadowTimer = null;
+		}
+		shadowCell = null;
+	}
+	
+	// Show shadow at cell and start auto-remove timer
+	function showShadow(r: number, c: number) {
+		// Clear existing timer
+		if (shadowTimer) {
+			clearTimeout(shadowTimer);
+		}
+		// Set new shadow cell
+		shadowCell = { r, c };
+		// Start timer to auto-remove after 5 seconds
+		shadowTimer = setTimeout(() => {
+			clearShadow();
+		}, SHADOW_TIMEOUT);
 	}
 
 	function toggleStickOrientation(sid: string) {
@@ -442,14 +475,26 @@
 			return;
 		}
 		
-		// Handle click: if stick is selected, try to place first (even on settled sticks)
-		// If no stick selected or placement fails, then select the cell's stick
+		// Two-tap placement model: if stick is selected
 		if (selectedSid) {
-			// Try to place the selected stick
-			const placed = await tapPlace(r, c);
-			// If placement succeeded, we're done. If not, fall through to select.
-			if (placed) return;
+			const selectedStick = sticks.find(s => s.sid === selectedSid);
+			if (selectedStick && !selectedStick.placed) {
+				// Check if this is second tap on same cell
+				if (shadowCell && shadowCell.r === r && shadowCell.c === c) {
+					// Second tap on same cell: place the stick
+					const placed = await tapPlace(r, c);
+					if (placed) {
+						clearShadow();
+						return;
+					}
+				} else {
+					// First tap or tap on different cell: show/move shadow
+					showShadow(r, c);
+					return;
+				}
+			}
 		}
+		
 		// If cell has content, select its stick
 		if (board.cells[r][c]) {
 			tapCellSelect(r, c);
@@ -849,19 +894,29 @@
 			lastTapTime = 0;
 			lastTapCell = null;
 		} else {
-			// Single tap: if stick selected, try to place at FINAL cell position
-			// CRITICAL: Only place if NOT dragging a placed stick
+			// Single tap: two-tap placement model
 			if (selectedSid && !dragState.isDragging) {
 				const selectedStick = sticks.find(s => s.sid === selectedSid);
-				// Only place if it's an unplaced stick from the bag
+				// Only handle if it's an unplaced stick from the bag
 				if (selectedStick && !selectedStick.placed) {
-					tapPlace(finalCell.r, finalCell.c).then((placed) => {
-						if (placed) {
-							lastTapTime = 0;
-							lastTapCell = null;
-						}
-					});
-					return;
+					// Check if this is second tap on same cell
+					if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
+						// Second tap on same cell: place the stick
+						tapPlace(finalCell.r, finalCell.c).then((placed) => {
+							if (placed) {
+								clearShadow();
+								lastTapTime = 0;
+								lastTapCell = null;
+							}
+						});
+						return;
+					} else {
+						// First tap or tap on different cell: show/move shadow
+						showShadow(finalCell.r, finalCell.c);
+						lastTapTime = now;
+						lastTapCell = { r: finalCell.r, c: finalCell.c };
+						return;
+					}
 				}
 			}
 			
@@ -1100,11 +1155,21 @@
 
 <!-- Window event handlers removed - using click-based placement only -->
 
-<div class="screen has-drag-cursor={dragCursor !== null}" style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;">
+<div 
+	class="screen has-drag-cursor={dragCursor !== null}" 
+	style="padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;"
+	on:click={(e) => {
+		// If clicking outside board, clear shadow
+		const target = e.target as HTMLElement;
+		if (!target.closest('.board') && !target.closest('.bank')) {
+			clearShadow();
+		}
+	}}
+>
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.15 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.16 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1209,81 +1274,27 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected and hovering/touching over board -->
+				<!-- Shadow preview when stick is selected - two-tap placement model -->
 				<!-- CRITICAL: Shadows are absolutely positioned overlays, NOT grid children -->
-				{#if (selectedSid || dragState.isDragging) && (hoverCell || touchCell)}
-					{@const previewCell = hoverCell || touchCell}
-					{#if dragState.isDragging && dragState.dragCluster.length > 0}
-						<!-- Show drag preview for cluster -->
-						{#each dragState.dragCluster as sid}
-							{@const placed = board.placed[sid]}
-							{#if placed && dragState.dragStartCell && previewCell}
-								{@const offsetR = previewCell.r - dragState.dragStartCell.r}
-								{@const offsetC = previewCell.c - dragState.dragStartCell.c}
-								{@const newR = placed.row + offsetR}
-								{@const newC = placed.col + offsetC}
-								{@const dr = placed.orientation === 'V' ? 1 : 0}
-								{@const dc = placed.orientation === 'H' ? 1 : 0}
-								{#each Array(placed.text.length) as _, i}
-									{@const shadowR = newR + dr * i}
-									{@const shadowC = newC + dc * i}
-									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
-										{@const tempStick: Stick = { sid, text: placed.text, orientation: placed.orientation, placed: true }}
-										{@const tempBoard = (() => {
-											let tb = structuredClone(board);
-											for (const csid of dragState.dragCluster) {
-												tb = removeStick(tb, csid);
-											}
-											return tb;
-										})()}
-										{@const canPlace = canPlaceStick(tempBoard, tempStick, newR, newC, bag.constraints.max_intersections_per_wordpair)}
-										<div 
-											class="shadowOverlay {canPlace.ok ? 'shadowValid' : 'shadowInvalid'}"
-											style="--row: {shadowR}; --col: {shadowC};"
-										>
-											<span class="letter shadowLetter">{placed.text[i]}</span>
-										</div>
-									{/if}
-								{/each}
+				{#if selectedSid && shadowCell}
+					{@const previewCell = shadowCell}
+					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
+					{#if selectedStick && !selectedStick.placed && previewCell}
+						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
+						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
+						{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
+						{#each Array(selectedStick.text.length) as _, i}
+							{@const shadowR = previewCell.r + dr * i}
+							{@const shadowC = previewCell.c + dc * i}
+							{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+								<div 
+									class="shadowOverlay {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
+									style="--row: {shadowR}; --col: {shadowC};"
+								>
+									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
+								</div>
 							{/if}
 						{/each}
-					{:else if selectedSid}
-						{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
-						{#if selectedStick && !selectedStick.placed && previewCell}
-							{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
-							{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
-							{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
-							{#if placementCheck.ok}
-								{#each Array(selectedStick.text.length) as _, i}
-									{@const shadowR = previewCell.r + dr * i}
-									{@const shadowC = previewCell.c + dc * i}
-									{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
-										<div 
-											class="shadowOverlay shadowValid"
-											style="--row: {shadowR}; --col: {shadowC};"
-										>
-											<span class="letter shadowLetter">{selectedStick.text[i]}</span>
-										</div>
-									{/if}
-								{/each}
-							{:else}
-								<!-- Show invalid placement preview (red) on touch screens -->
-								{#if touchCell}
-									{#each Array(selectedStick.text.length) as _, i}
-										{@const shadowR = previewCell.r + dr * i}
-										{@const shadowC = previewCell.c + dc * i}
-										{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
-											<div 
-												class="shadowOverlay shadowInvalid"
-												style="--row: {shadowR}; --col: {shadowC};"
-											>
-												<span class="letter shadowLetter">{selectedStick.text[i]}</span>
-											</div>
-										{/if}
-									{/each}
-								{/if}
-							{/if}
-						{/if}
 					{/if}
 				{/if}
 
