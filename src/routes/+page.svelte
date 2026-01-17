@@ -134,9 +134,8 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Tetris-style board sizing: calculate cell size first, then board size
+		// Simple, reliable board sizing
 		const calculateBoardSize = () => {
-			// Don't recalculate during drag - freeze board position
 			if (viewportLocked || dragState.isDragging) return;
 			
 			setTimeout(() => {
@@ -147,38 +146,35 @@
 				
 				if (!headerEl || !bankEl) return;
 				
-				// Measure actual heights
 				const headerHeight = headerEl.offsetHeight;
 				const bankHeight = bankEl.offsetHeight;
-				const screenPadding = 20; // 10px top + 10px bottom
-				const boardBorder = 2; // 1px border each side
+				const screenPadding = 20;
 				
-				// Use visual viewport for mobile accuracy
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.visualViewport?.width || window.innerWidth;
 				
-				// Available space - be very conservative
+				// Very conservative: leave 20px padding on each side
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 30; // 15px padding each side for safety
+				const availableWidth = vw - 40; // 20px each side
 				
-				// Board is 12 columns × 11 rows
-				// Calculate cell size based on both dimensions
-				const cellWidthFromHeight = (availableHeight - boardBorder) / 11;
-				const cellWidthFromWidth = (availableWidth - boardBorder) / 12;
+				// Board aspect ratio 12:11
+				const widthBasedHeight = availableWidth * (11 / 12);
+				const heightBasedWidth = availableHeight * (12 / 11);
 				
-				// Use the smaller cell size to ensure board fits
-				const cellSize = Math.min(cellWidthFromHeight, cellWidthFromWidth);
+				// Use smaller dimension, then reduce by 2% for safety
+				let boardWidth: number;
+				if (widthBasedHeight <= availableHeight) {
+					boardWidth = availableWidth * 0.98;
+				} else {
+					boardWidth = heightBasedWidth * 0.98;
+				}
 				
-				// Calculate board width from cell size
-				// Board width = (cellSize * 12) + border
-				const calculatedBoardWidth = (cellSize * 12) + boardBorder;
+				// Never exceed viewport
+				boardWidth = Math.min(boardWidth, vw - 40);
+				boardWidth = Math.max(boardWidth, 300);
 				
-				// Ensure it never exceeds viewport
-				const finalBoardWidth = Math.min(calculatedBoardWidth, vw - 30);
-				
-				// Set the size
-				boardSize = `${finalBoardWidth}px`;
-			}, 50);
+				boardSize = `${boardWidth}px`;
+			}, 100);
 		};
 		
 		calculateBoardSize();
@@ -498,37 +494,16 @@
 			return;
 		}
 		
-		// Two-tap placement model: if stick is selected
+		// SIMPLE: If stick is selected, try to place it immediately
 		if (selectedSid) {
 			const selectedStick = sticks.find(s => s.sid === selectedSid);
 			if (selectedStick && !selectedStick.placed) {
-				// Check if this is second tap on same cell
-				const now = Date.now();
-				const isSameCell = shadowCell && shadowCell.r === r && shadowCell.c === c;
-				const isQuickTap = now - (lastTapTime || 0) < 500;
-				
-				if (isSameCell && isQuickTap) {
-					// Second tap on same cell: place the stick
-					const placed = await tapPlace(r, c);
-					if (placed) {
-						clearShadow();
-						lastTapTime = 0;
-						lastTapCell = null;
-						return;
-					} else {
-						// Placement failed, show shadow again
-						showShadow(r, c);
-						lastTapTime = now;
-						lastTapCell = { r, c };
-						return;
-					}
-				} else {
-					// First tap or tap on different cell: show/move shadow
-					showShadow(r, c);
-					lastTapTime = now;
-					lastTapCell = { r, c };
+				const placed = await tapPlace(r, c);
+				if (placed) {
+					clearShadow();
 					return;
 				}
+				// If placement failed, fall through to select cell's stick
 			}
 		}
 		
@@ -539,30 +514,28 @@
 	}
 	
 	function handleCellMouseEnter(r: number, c: number) {
-		// Track hover for shadow preview - only update if cell changed (prevents flicker)
+		// Show shadow preview on hover (desktop)
 		if (dragState.isDragging) {
-			// Update drag position
 			hoverCell = { r, c };
 			lastHoverCell = { r, c };
 		} else if (selectedSid) {
-			// Only update if moving to a different cell
-			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
-				hoverCell = { r, c };
-				lastHoverCell = { r, c };
+			const selectedStick = sticks.find(s => s.sid === selectedSid);
+			if (selectedStick && !selectedStick.placed) {
+				// Show shadow at hover position
+				showShadow(r, c);
 			}
 		}
 	}
 	
 	function handleCellMouseMove(r: number, c: number) {
-		// Update cursor position for shadow preview - only if cell changed
+		// Update shadow preview on mouse move (desktop)
 		if (dragState.isDragging) {
-			// Update drag position
 			hoverCell = { r, c };
 			lastHoverCell = { r, c };
 		} else if (selectedSid) {
-			if (!lastHoverCell || lastHoverCell.r !== r || lastHoverCell.c !== c) {
-				hoverCell = { r, c };
-				lastHoverCell = { r, c };
+			const selectedStick = sticks.find(s => s.sid === selectedSid);
+			if (selectedStick && !selectedStick.placed) {
+				showShadow(r, c);
 			}
 		}
 	}
@@ -931,37 +904,19 @@
 			lastTapTime = 0;
 			lastTapCell = null;
 		} else {
-			// Single tap: two-tap placement model
+			// Single tap: SIMPLE - if stick selected, try to place immediately
 			if (selectedSid && !dragState.isDragging) {
 				const selectedStick = sticks.find(s => s.sid === selectedSid);
 				// Only handle if it's an unplaced stick from the bag
 				if (selectedStick && !selectedStick.placed) {
-					// Check if this is second tap on same cell (within 500ms and same position)
-					const isSameCell = shadowCell && 
-						shadowCell.r === finalCell.r && 
-						shadowCell.c === finalCell.c;
-					const isQuickTap = now - (lastTapTime || 0) < 500;
-					
-					if (isSameCell && isQuickTap) {
-						// Second tap on same cell: place the stick
-						tapPlace(finalCell.r, finalCell.c).then((placed) => {
-							if (placed) {
-								clearShadow();
-								lastTapTime = 0;
-								lastTapCell = null;
-							} else {
-								// Placement failed, show shadow again
-								showShadow(finalCell.r, finalCell.c);
-							}
-						});
-						return;
-					} else {
-						// First tap or tap on different cell: show/move shadow
-						showShadow(finalCell.r, finalCell.c);
-						lastTapTime = now;
-						lastTapCell = { r: finalCell.r, c: finalCell.c };
-						return;
-					}
+					tapPlace(finalCell.r, finalCell.c).then((placed) => {
+						if (placed) {
+							clearShadow();
+							lastTapTime = 0;
+							lastTapCell = null;
+						}
+					});
+					return;
 				}
 			}
 			
@@ -1214,7 +1169,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.21 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.22 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1305,7 +1260,16 @@
 								handleCellDoubleClick(r, c, e);
 							}}
 							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
-							on:touchmove={(e) => handleCellTouchMove(r, c, e)}
+							on:touchmove={(e) => {
+					handleCellTouchMove(r, c, e);
+					// Show shadow on touch move
+					if (selectedSid && !dragState.isDragging) {
+						const selectedStick = sticks.find(s => s.sid === selectedSid);
+						if (selectedStick && !selectedStick.placed) {
+							showShadow(r, c);
+						}
+					}
+				}}
 							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
 							on:mousemove={() => handleCellMouseMove(r, c)}
@@ -1319,9 +1283,10 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected - two-tap placement model -->
+				<!-- Shadow preview when stick is selected - shows on hover/touch -->
 				<!-- Shadows are grid children for perfect alignment -->
-				{#if selectedSid && shadowCell}
+				{#if selectedSid && (shadowCell || hoverCell || touchCell)}
+					{@const previewCell = shadowCell || hoverCell || touchCell}
 					{@const previewCell = shadowCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
 					{#if selectedStick && !selectedStick.placed && previewCell}
