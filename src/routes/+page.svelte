@@ -90,6 +90,9 @@
 	
 	// Lock viewport during drag to prevent board shifting
 	let viewportLocked = false;
+	
+	// CRITICAL: Flag to completely disable drag when placing new sticks
+	let placementMode = false; // true when placing new stick, false when dragging placed sticks
 
 	// UI computed
 	$: filledCells = countFilled(board);
@@ -134,61 +137,17 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Measure actual header/bank heights and set CSS variables
+		// Use CSS-based sizing with viewport constraints - no JavaScript calculations
 		const calculateBoardSize = () => {
-			if (viewportLocked || dragState.isDragging) return;
-			
-			setTimeout(() => {
-				if (viewportLocked || dragState.isDragging) return;
-				
-				const headerEl = document.querySelector('.top') as HTMLElement;
-				const bankEl = document.querySelector('.bank') as HTMLElement;
-				const boardEl = document.querySelector('.board') as HTMLElement;
-				
-				if (!headerEl || !bankEl || !boardEl) return;
-				
-				// Measure actual heights
-				const headerHeight = headerEl.offsetHeight;
-				const bankHeight = bankEl.offsetHeight;
-				
-				// Set CSS variables for accurate calculation
-				document.documentElement.style.setProperty('--header-height', `${headerHeight}px`);
-				document.documentElement.style.setProperty('--bank-height', `${bankHeight}px`);
-				
-				// Calculate available space - EXTRA conservative
-				const vh = window.visualViewport?.height || window.innerHeight;
-				const vw = window.visualViewport?.width || window.innerWidth;
-				const screenPadding = 20; // 10px top + 10px bottom
-				
-				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 40; // 20px padding each side for safety
-				
-				// Board aspect ratio 12:11
-				// Calculate cell size first, then board width
-				// Make cells 1px smaller to ensure no clipping
-				const cellWidthFromHeight = (availableHeight - 2) / 11; // -2 for border, divide by 11 rows
-				const cellWidthFromWidth = (availableWidth - 2) / 12; // -2 for border, divide by 12 cols
-				
-				// Use smaller cell size, then subtract 1px per cell for safety
-				const cellSize = Math.min(cellWidthFromHeight, cellWidthFromWidth) - 1;
-				
-				// Board width = (cellSize * 12) + border
-				let boardWidth = (cellSize * 12) + 2;
-				
-				// CRITICAL: Never exceed viewport
-				boardWidth = Math.min(boardWidth, vw - 40);
-				boardWidth = Math.max(boardWidth, 300);
-				
-				// Set explicit width
-				boardEl.style.width = `${boardWidth}px`;
-			}, 150);
+			// Just trigger a resize event - CSS will handle sizing
+			// This is a no-op, CSS does all the work
 		};
 		
 		calculateBoardSize();
 		
-		// Recalculate on resize - but not during drag
+		// Recalculate on resize - but not during drag or placement
 		const handleResize = () => {
-			if (!viewportLocked && !dragState.isDragging) {
+			if (!viewportLocked && !dragState.isDragging && !placementMode) {
 				calculateBoardSize();
 			}
 		};
@@ -432,12 +391,12 @@
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return false;
 		
-		// CRITICAL: Completely clear any drag state before placement
-		// This ensures settled sticks NEVER move during new stick placement
-		if (dragState.isDragging) {
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-			viewportLocked = false;
-		}
+		// CRITICAL: Set placement mode - this completely disables drag
+		placementMode = true;
+		
+		// CRITICAL: Completely clear any drag state
+		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		viewportLocked = false;
 		
 		// CRITICAL: Cancel any hold timer
 		if (holdTimer) {
@@ -446,22 +405,23 @@
 		}
 		
 		// Bounds check
-		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return false;
-
-		// Calculate placement position: clicked tile is where FIRST letter goes
-		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
-		if (!ok.ok) {
+		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) {
+			placementMode = false;
 			return false;
 		}
 
-		// Lock viewport during placement to prevent board shift
+		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
+		if (!ok.ok) {
+			placementMode = false;
+			return false;
+		}
+
 		viewportLocked = true;
-		
 		await tick();
 		
 		pushHistory();
 		
-		// Place the stick - this should NEVER touch existing sticks
+		// Place the stick
 		const newBoard = placeStick(board, stick, r, c);
 		
 		// Update state atomically
@@ -472,12 +432,12 @@
 		lastHoverCell = null;
 		clearShadow();
 		
-		// Ensure drag state is completely cleared
+		// CRITICAL: Clear placement mode and drag state
+		placementMode = false;
 		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
 		
 		await tick();
 		
-		// Unlock viewport
 		setTimeout(() => {
 			viewportLocked = false;
 		}, 150);
@@ -507,8 +467,8 @@
 			e.stopPropagation();
 		}
 		
-		// Don't handle click if we just finished a drag
-		if (dragState.isDragging) {
+		// Don't handle click if we're dragging or in placement mode
+		if (dragState.isDragging || placementMode) {
 			return;
 		}
 		
@@ -622,6 +582,11 @@
 	function handleCellMouseUp(r: number, c: number, e: MouseEvent) {
 		e.preventDefault();
 		
+		// CRITICAL: Never handle drag if in placement mode
+		if (placementMode) {
+			return;
+		}
+		
 		// Clear hold timer if it exists
 		if (holdTimer) {
 			clearTimeout(holdTimer);
@@ -729,19 +694,16 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// CRITICAL: If a new stick is selected, NEVER allow drag to start
-		// This prevents settled sticks from moving when placing new sticks
-		if (selectedSid) {
-			const selectedStick = sticks.find(s => s.sid === selectedSid);
-			// If it's an unplaced stick, this is for placement, not dragging
-			if (selectedStick && !selectedStick.placed) {
-				// Clear any existing drag state
+		// CRITICAL: If in placement mode or new stick selected, NEVER allow drag
+		if (placementMode || selectedSid) {
+			const selectedStick = selectedSid ? sticks.find(s => s.sid === selectedSid) : null;
+			if (placementMode || (selectedStick && !selectedStick.placed)) {
+				// Completely disable drag
 				dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
 				if (holdTimer) {
 					clearTimeout(holdTimer);
 					holdTimer = null;
 				}
-				// Just track position for shadow preview
 				touchCell = { r, c };
 				lastTouchCell = { r, c };
 				return;
@@ -871,6 +833,11 @@
 		// Use touchCell if available (most recent tracked position), otherwise use endCell
 		const finalCell = touchCell || endCell;
 		
+		// CRITICAL: Never handle drag if in placement mode
+		if (placementMode) {
+			return;
+		}
+		
 		// Handle drag end - ONLY if actually dragging a PLACED stick
 		if (dragState.isDragging && finalCell && dragState.dragSid) {
 			// Verify we're dragging a placed stick, not placing a new one
@@ -940,7 +907,7 @@
 			lastTapCell = null;
 		} else {
 			// Single tap: two-tap placement model
-			if (selectedSid && !dragState.isDragging) {
+			if (selectedSid && !dragState.isDragging && !placementMode) {
 				const selectedStick = sticks.find(s => s.sid === selectedSid);
 				// Only handle if it's an unplaced stick from the bag
 				if (selectedStick && !selectedStick.placed) {
@@ -965,8 +932,8 @@
 				}
 			}
 			
-			// If cell has content, select its stick (only if not dragging)
-			if (!dragState.isDragging && board.cells[finalCell.r] && board.cells[finalCell.r][finalCell.c]) {
+			// If cell has content, select its stick (only if not dragging and not placing)
+			if (!dragState.isDragging && !placementMode && board.cells[finalCell.r] && board.cells[finalCell.r][finalCell.c]) {
 				tapCellSelect(finalCell.r, finalCell.c);
 			}
 			
@@ -1214,7 +1181,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.25 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.26 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1765,9 +1732,10 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
+		overflow: visible; /* Allow board to be fully visible */
 		padding: 0;
 		min-height: 0;
+		min-width: 0; /* Allow flex child to shrink below content size */
 	}
 
 	.boardWrap {
@@ -1779,26 +1747,22 @@
 		justify-content: center;
 		margin: 0 auto;
 		flex: 1 1 0;
-		min-width: 0;
+		min-width: 0; /* Critical: allows flex child to shrink */
 		min-height: 0;
 		width: 100%;
-		overflow: visible; /* Allow board to be fully visible */
+		max-width: 100%; /* Never exceed parent */
+		overflow: visible;
 		box-sizing: border-box;
-		/* Freeze position - prevent any layout shifts */
-		contain: layout style paint; /* Isolate layout calculations */
-		transform: translateZ(0); /* Force GPU layer */
-		backface-visibility: hidden; /* Prevent visual glitches */
 	}
 
 	.board {
 		position: relative;
-		aspect-ratio: 12 / 11; /* 12 wide by 11 tall - MUST maintain this */
+		aspect-ratio: 12 / 11; /* 12 wide by 11 tall */
 		display: grid;
-		grid-template-columns: repeat(12, 1fr); /* All 12 columns visible */
-		grid-template-rows: repeat(11, 1fr); /* All 11 rows visible */
+		grid-template-columns: repeat(12, 1fr);
+		grid-template-rows: repeat(11, 1fr);
 		gap: 0;
-		/* REMOVED border-radius to prevent clipping issues */
-		overflow: visible; /* Allow full visibility - no clipping */
+		overflow: visible;
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1806,12 +1770,10 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Width set by JavaScript to ensure perfect fit */
-		/* CRITICAL: Isolate board from layout changes */
-		contain: layout style paint; /* Prevent layout shifts from affecting board */
-		transform: translateZ(0); /* Force GPU layer - prevents reflows */
-		backface-visibility: hidden; /* Prevent visual glitches */
-		isolation: isolate; /* Create new stacking context */
+		/* Pure CSS sizing - screen already has padding, so use 100% of available space */
+		width: 100%;
+		max-width: 100%;
+		height: auto;
 	}
 
 	/* subtle grid lines */
