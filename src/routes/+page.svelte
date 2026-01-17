@@ -13,12 +13,17 @@
 	let board: BoardState = createEmptyBoard(12, 11);
 
 	let selectedSid: string | null = null;
-	let showCheat = true;
+	// Use sessionStorage to remember if user dismissed quickstart
+	let showCheat = typeof sessionStorage !== 'undefined' 
+		? sessionStorage.getItem('cruxword-quickstart-dismissed') !== 'true'
+		: true;
 	let showClue = true;
 	let showClueDetails = false; // toggle between question and metadata
 	
 	// Board size calculated dynamically based on actual element heights
 	let boardSize = '400px'; // fallback
+	let cellSize = 0; // Actual pixel size of each cell (for shadow positioning)
+	let boardElement: HTMLElement | null = null; // Reference to board element
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -131,48 +136,48 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate board size based on ACTUAL measured element heights
+		// Calculate board size using ResizeObserver for accurate measurements
 		const calculateBoardSize = () => {
 			// Don't recalculate during drag - freeze board position
 			if (viewportLocked || dragState.isDragging) return;
 			
 			// Wait for DOM to be ready
-			setTimeout(() => {
+			requestAnimationFrame(() => {
 				// Double-check we're not in drag state
 				if (viewportLocked || dragState.isDragging) return;
 				
 				const headerEl = document.querySelector('.top') as HTMLElement;
 				const bankEl = document.querySelector('.bank') as HTMLElement;
-				const screenEl = document.querySelector('.screen') as HTMLElement;
+				const boardEl = document.querySelector('.board') as HTMLElement;
 				
-				if (!headerEl || !bankEl || !screenEl) return;
+				if (!headerEl || !bankEl || !boardEl) return;
 				
 				// Measure actual heights
 				const headerHeight = headerEl.offsetHeight;
 				const bankHeight = bankEl.offsetHeight;
 				const screenPadding = 20; // 10px top + 10px bottom
 				
-				// Available space - increase buffer to prevent clipping on right side
+				// Available space - use visual viewport for mobile accuracy
 				const vh = window.visualViewport?.height || window.innerHeight;
-				const vw = window.innerWidth;
-				const boardBorder = 2; // 1px border on each side
-				const buffer = 12; // Increased buffer to prevent clipping (was 8)
-				const availableHeight = vh - headerHeight - bankHeight - screenPadding - buffer;
-				const availableWidth = vw - screenPadding - buffer - boardBorder;
+				const vw = window.visualViewport?.width || window.innerWidth;
+				
+				// Calculate available space more accurately
+				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
+				const availableWidth = vw - 20; // 10px padding each side
 				
 				// Board aspect ratio is 12:11 (width:height)
 				// Calculate what size fits both constraints
 				const widthBasedHeight = availableWidth * (11 / 12);
 				const heightBasedWidth = availableHeight * (12 / 11);
 				
-				// Use the smaller dimension to ensure it fits
+				// Use the smaller dimension to ensure it fits, but be more generous
 				let boardWidth: number;
 				if (widthBasedHeight <= availableHeight) {
-					// Width is the limiting factor
-					boardWidth = availableWidth;
+					// Width is the limiting factor - use 98% to ensure no clipping
+					boardWidth = availableWidth * 0.98;
 				} else {
 					// Height is the limiting factor
-					boardWidth = heightBasedWidth;
+					boardWidth = heightBasedWidth * 0.98;
 				}
 				
 				// Ensure minimum size
@@ -180,7 +185,17 @@
 				
 				// Set the size
 				boardSize = `${boardWidth}px`;
-			}, 100);
+				boardElement = boardEl;
+				
+				// Calculate actual cell size after board is sized
+				requestAnimationFrame(() => {
+					if (boardEl) {
+						const boardRect = boardEl.getBoundingClientRect();
+						// Account for 1px border on each side
+						cellSize = (boardRect.width - 2) / 12; // 12 columns
+					}
+				});
+			});
 		};
 		
 		calculateBoardSize();
@@ -196,13 +211,43 @@
 			window.visualViewport.addEventListener('resize', handleResize);
 		}
 		
-		startNewGame();
-		// any first user action hides cheat sheet
-		const hide = () => {
-			if (showCheat) showCheat = false;
-			window.removeEventListener('pointerdown', hide, { capture: true } as any);
+		// Use ResizeObserver for more accurate board sizing
+		let resizeObserver: ResizeObserver | null = null;
+		setTimeout(() => {
+			resizeObserver = new ResizeObserver(() => {
+				if (!viewportLocked && !dragState.isDragging) {
+					calculateBoardSize();
+				}
+			});
+			
+			// Observe header and bank for size changes
+			const headerEl = document.querySelector('.top') as HTMLElement;
+			const bankEl = document.querySelector('.bank') as HTMLElement;
+			if (headerEl) resizeObserver!.observe(headerEl);
+			if (bankEl) resizeObserver!.observe(bankEl);
+		}, 200);
+		
+		// Store resizeObserver for cleanup
+		const cleanupResizeObserver = () => {
+			if (resizeObserver) {
+				resizeObserver.disconnect();
+			}
 		};
-		window.addEventListener('pointerdown', hide, { capture: true } as any);
+		
+		startNewGame();
+		// Hide cheat sheet on first interaction
+		const hideCheat = () => {
+			if (showCheat) {
+				showCheat = false;
+				if (typeof sessionStorage !== 'undefined') {
+					sessionStorage.setItem('cruxword-quickstart-dismissed', 'true');
+				}
+			}
+			window.removeEventListener('pointerdown', hideCheat, { capture: true } as any);
+			window.removeEventListener('touchstart', hideCheat, { capture: true } as any);
+		};
+		window.addEventListener('pointerdown', hideCheat, { capture: true } as any);
+		window.addEventListener('touchstart', hideCheat, { capture: true } as any);
 		
 		// Keyboard shortcuts for browser dev tools
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -281,6 +326,8 @@
 			if (shadowTimer) {
 				clearTimeout(shadowTimer);
 			}
+			// ResizeObserver cleanup
+			cleanupResizeObserver();
 		};
 	});
 
@@ -1186,7 +1233,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.18 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.19 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1304,9 +1351,15 @@
 							{@const shadowR = previewCell.r + dr * i}
 							{@const shadowC = previewCell.c + dc * i}
 							{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
+								{@const cellEl = boardElement?.querySelector(`[data-r="${shadowR}"][data-c="${shadowC}"]`) as HTMLElement}
+								{@const cellRect = cellEl?.getBoundingClientRect()}
+								{@const boardRect = boardElement?.getBoundingClientRect()}
+								{@const topPos = cellRect && boardRect ? cellRect.top - boardRect.top : null}
+								{@const leftPos = cellRect && boardRect ? cellRect.left - boardRect.left : null}
+								{@const size = cellSize || null}
 								<div 
 									class="shadowOverlay {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
-									style="--row: {shadowR}; --col: {shadowC};"
+									style="--row: {shadowR}; --col: {shadowC}; {topPos !== null ? `top: ${topPos}px;` : `top: calc(1px + var(--row) * ((100% - 2px) / 11));`} {leftPos !== null ? `left: ${leftPos}px;` : `left: calc(1px + var(--col) * ((100% - 2px) / 12));`} {size !== null ? `width: ${size}px; height: ${size}px;` : `width: calc((100% - 2px) / 12); height: calc((100% - 2px) / 11);`}"
 								>
 									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 								</div>
@@ -1319,12 +1372,20 @@
 					<div class="cheat" on:click|self={(e) => {
 						if ((e.target as HTMLElement).classList.contains('cheat')) {
 							showCheat = false;
+							if (typeof sessionStorage !== 'undefined') {
+								sessionStorage.setItem('cruxword-quickstart-dismissed', 'true');
+							}
 						}
 					}}>
 						<div class="cheatCard" on:click|stopPropagation>
 							<div class="cheatHeader">
 								<div class="cheatTitle">Quickstart</div>
-								<button class="cheatClose" on:click={() => (showCheat = false)} aria-label="Close help">×</button>
+								<button class="cheatClose" on:click={() => {
+									showCheat = false;
+									if (typeof sessionStorage !== 'undefined') {
+										sessionStorage.setItem('cruxword-quickstart-dismissed', 'true');
+									}
+								}} aria-label="Close help">×</button>
 							</div>
 							<div class="cheatContent">
 								<div class="cheatSection">
@@ -1813,13 +1874,8 @@
 	/* This prevents shadows from affecting grid layout and causing tile movement */
 	.shadowOverlay {
 		position: absolute;
-		/* Position using CSS custom properties and calc() based on grid cell size */
-		/* Must account for board's 1px border on top and left */
-		/* Board has border: 1px, so inner size is 100% - 2px, each cell is (100% - 2px) / N */
-		top: calc(1px + var(--row) * ((100% - 2px) / 11));
-		left: calc(1px + var(--col) * ((100% - 2px) / 12));
-		width: calc((100% - 2px) / 12);
-		height: calc((100% - 2px) / 11);
+		/* Position can be set via inline style (pixels) or CSS calc (fallback) */
+		/* JavaScript sets pixel positions for perfect alignment */
 		z-index: 50; /* Higher than regular cells to overlay */
 		pointer-events: none; /* Don't block interactions */
 		opacity: 0.6; /* More subtle */
