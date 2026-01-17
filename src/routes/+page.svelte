@@ -141,47 +141,55 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Size board by measured container and integer cell size
-		// CRITICAL: Use fixed pixel sizes for both grid and shadows to ensure alignment
+		// CRITICAL: Calculate board size from VIEWPORT, not container
+		// This ensures the board NEVER clips on mobile devices
 		const calculateBoardSize = () => {
 			if (viewportLocked || placementMode) return;
-			requestAnimationFrame(() => {
-				if (viewportLocked || placementMode) return;
-				const wrapEl = document.querySelector('.boardWrap') as HTMLElement;
-				const boardEl = document.querySelector('.board') as HTMLElement;
-				if (!wrapEl || !boardEl) return;
-
-				// Measure available space
-				const wrapRect = wrapEl.getBoundingClientRect();
-				const availableWidth = Math.floor(wrapRect.width);
-				const availableHeight = Math.floor(wrapRect.height);
-				
-				// Reserve space for border (1px each side = 2px total)
-				const border = 2;
-				
-				// Calculate maximum cell size that fits
-				// Board is 12 columns x 11 rows
-				const maxCellW = Math.floor((availableWidth - border) / 12);
-				const maxCellH = Math.floor((availableHeight - border) / 11);
-				
-				// Use the smaller dimension to ensure board fits, with 2px safety margin
-				let cellSize = Math.min(maxCellW, maxCellH) - 2;
-				if (cellSize < 10) cellSize = 10; // minimum usable size
-				
-				// Calculate exact board dimensions
-				const boardWidth = (cellSize * 12) + border;
-				const boardHeight = (cellSize * 11) + border;
-				
-				// Set CSS variable for cell size - used by both grid and shadows
-				boardEl.style.setProperty('--cell-size', `${cellSize}px`);
-				
-				// Set explicit board dimensions
-				boardEl.style.width = `${boardWidth}px`;
-				boardEl.style.height = `${boardHeight}px`;
-			});
+			
+			const boardEl = document.querySelector('.board') as HTMLElement;
+			const headerEl = document.querySelector('.top') as HTMLElement;
+			const bankEl = document.querySelector('.bank') as HTMLElement;
+			if (!boardEl || !headerEl || !bankEl) return;
+			
+			// Use visualViewport for accurate mobile measurements
+			const vh = window.visualViewport?.height ?? window.innerHeight;
+			const vw = window.visualViewport?.width ?? window.innerWidth;
+			
+			// Measure actual heights of header and bank
+			const headerHeight = headerEl.getBoundingClientRect().height;
+			const bankHeight = bankEl.getBoundingClientRect().height;
+			
+			// Calculate available space with generous padding
+			const verticalPadding = 16; // Safety margin
+			const horizontalPadding = 20; // 10px each side
+			const availableHeight = vh - headerHeight - bankHeight - verticalPadding;
+			const availableWidth = vw - horizontalPadding;
+			
+			// Board is 12 columns x 11 rows
+			const border = 2; // 1px border each side
+			
+			// Calculate maximum cell size that fits in both dimensions
+			const maxCellW = Math.floor((availableWidth - border) / 12);
+			const maxCellH = Math.floor((availableHeight - border) / 11);
+			
+			// Use smaller dimension with 3px extra safety margin
+			let cellSize = Math.min(maxCellW, maxCellH) - 3;
+			if (cellSize < 12) cellSize = 12; // minimum usable size
+			
+			// Calculate exact board dimensions
+			const boardWidth = (cellSize * 12) + border;
+			const boardHeight = (cellSize * 11) + border;
+			
+			// Set CSS variable for cell size - used by both grid and shadows
+			boardEl.style.setProperty('--cell-size', `${cellSize}px`);
+			
+			// Set explicit board dimensions
+			boardEl.style.width = `${boardWidth}px`;
+			boardEl.style.height = `${boardHeight}px`;
 		};
 		
-		calculateBoardSize();
+		// Initial calculation with small delay to ensure DOM is ready
+		setTimeout(calculateBoardSize, 100);
 		
 		// Recalculate on resize - but not during drag or placement
 		const handleResize = () => {
@@ -1261,7 +1269,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.28 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.29 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1301,10 +1309,9 @@
 				class="board" 
 				style="--rows: 11; --cols: 12;" 
 				aria-label="12 by 11 board"
-				on:touchmove={(e) => {
-					// CRITICAL: Always prevent default to stop zoom
-					e.preventDefault();
-					// Handle touchmove on board to track finger movement across cells - only if cell changed
+				on:touchmove|nonpassive|preventDefault={(e) => {
+					// CRITICAL: |nonpassive modifier allows preventDefault to work on iOS Safari
+					// Handle touchmove on board to track finger movement across cells
 					if (selectedSid && e.touches.length > 0) {
 						const touch = e.touches[0];
 						const element = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -1351,11 +1358,9 @@
 								e.stopPropagation();
 								handleCellDoubleClick(r, c, e);
 							}}
-							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
-						on:touchmove={(e) => {
-							handleCellTouchMove(r, c, e);
-						}}
-							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
+							on:touchstart|nonpassive|preventDefault={(e) => handleCellTouchStart(r, c, e)}
+							on:touchmove|nonpassive|preventDefault={(e) => handleCellTouchMove(r, c, e)}
+							on:touchend|nonpassive|preventDefault={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
 							on:mousemove={() => handleCellMouseMove(r, c)}
 							on:mouseleave={handleCellMouseLeave}
