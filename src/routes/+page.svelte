@@ -155,9 +155,10 @@
 				// Available space - increase buffer to prevent clipping on right side
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.innerWidth;
-				const buffer = 8; // Increased buffer to prevent clipping (was 4)
+				const boardBorder = 2; // 1px border on each side
+				const buffer = 12; // Increased buffer to prevent clipping (was 8)
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding - buffer;
-				const availableWidth = vw - screenPadding - buffer;
+				const availableWidth = vw - screenPadding - buffer - boardBorder;
 				
 				// Board aspect ratio is 12:11 (width:height)
 				// Calculate what size fits both constraints
@@ -1813,11 +1814,12 @@
 	.shadowOverlay {
 		position: absolute;
 		/* Position using CSS custom properties and calc() based on grid cell size */
-		/* Must account for board's 1px border */
-		top: calc(var(--row) * (100% / 11));
-		left: calc(var(--col) * (100% / 12));
-		width: calc(100% / 12);
-		height: calc(100% / 11);
+		/* Must account for board's 1px border on top and left */
+		/* Board has border: 1px, so inner size is 100% - 2px, each cell is (100% - 2px) / N */
+		top: calc(1px + var(--row) * ((100% - 2px) / 11));
+		left: calc(1px + var(--col) * ((100% - 2px) / 12));
+		width: calc((100% - 2px) / 12);
+		height: calc((100% - 2px) / 11);
 		z-index: 50; /* Higher than regular cells to overlay */
 		pointer-events: none; /* Don't block interactions */
 		opacity: 0.6; /* More subtle */
