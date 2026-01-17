@@ -2,7 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { pickRandomBag } from '$lib/bags';
 	import { bagToSticks, validateBagShape } from '$lib/game/bag';
-	import { canPlaceStick, createEmptyBoard, moveStick, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
+	import { canPlaceStick, createEmptyBoard, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
 	import { validateAndScore } from '$lib/game/scoring';
 	import { loadDictionary, isValidWord } from '$lib/game/dictionary';
 	import type { BoardState, MorphemeBag, Stick } from '$lib/game/types';
@@ -10,8 +10,7 @@
 	let bag: MorphemeBag = pickRandomBag();
 	let bagIssues: string[] = [];
 	let sticks: Stick[] = [];
-	// FIXED: createEmptyBoard(rows, cols) - UI expects 11 rows, 12 columns
-	let board: BoardState = createEmptyBoard(11, 12);
+	let board: BoardState = createEmptyBoard(12, 11);
 
 	let selectedSid: string | null = null;
 	// Use sessionStorage to remember if user dismissed quickstart
@@ -21,11 +20,8 @@
 	let showClue = true;
 	let showClueDetails = false; // toggle between question and metadata
 	
-	// Board size calculated dynamically based on actual element heights
-	let boardSize = '400px'; // fallback
-
-	// Disable drag entirely per placement rules
-	const dragEnabled = false;
+	// Board dimensions - calculated explicitly from viewport
+	let cellSize = 28; // pixels per cell - will be calculated
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -35,12 +31,6 @@
 	let history: BoardState[] = [];
 	let redoHistory: BoardState[] = [];
 
-	// Shadow preview state (when stick is selected)
-	let hoverCell: { r: number; c: number } | null = null; // cell being hovered over (mouse)
-	let touchCell: { r: number; c: number } | null = null; // cell being touched (touch screens)
-	let lastHoverCell: { r: number; c: number } | null = null; // last cell that showed shadow (to prevent flicker)
-	let lastTouchCell: { r: number; c: number } | null = null; // last cell touched (to prevent flicker on touch)
-	
 	// Two-tap placement model: shadow state
 	let shadowCell: { r: number; c: number } | null = null; // cell where shadow is shown (for two-tap placement)
 	let shadowTimer: ReturnType<typeof setTimeout> | null = null; // timer to auto-remove shadow after 5 seconds
@@ -77,26 +67,8 @@
 	let lastTapCell: { r: number; c: number } | null = null;
 	const DOUBLE_TAP_DELAY = 300; // ms
 	
-	// Drag state for press-and-hold drag
-	let dragState: {
-		isDragging: boolean;
-		dragSid: string | null; // stick being dragged (from bag or placed)
-		dragStartCell: { r: number; c: number } | null;
-		dragCluster: string[]; // all stick IDs in cluster if dragging placed stick
-	} = {
-		isDragging: false,
-		dragSid: null,
-		dragStartCell: null,
-		dragCluster: []
-	};
-	let holdTimer: ReturnType<typeof setTimeout> | null = null;
-	const HOLD_DELAY = 200; // ms to hold before drag starts
-	
-	// Lock viewport during drag to prevent board shifting
-	let viewportLocked = false;
-	
-	// CRITICAL: Flag to completely disable drag when placing new sticks
-	let placementMode = false; // true when placing new stick, false when dragging placed sticks
+	// CRITICAL: Flag to prevent resize during placement
+	let placementMode = false;
 
 	// UI computed
 	$: filledCells = countFilled(board);
@@ -141,59 +113,59 @@
 			dictionaryLoaded = true;
 		});
 		
-		// CRITICAL: Calculate board size from VIEWPORT, not container
-		// This ensures the board NEVER clips on mobile devices
+		// COMPLETELY NEW APPROACH: Calculate board size from actual viewport
+		// instead of relying on flex container measurements
 		const calculateBoardSize = () => {
-			if (viewportLocked || placementMode) return;
+			if (placementMode) return;
 			
-			const boardEl = document.querySelector('.board') as HTMLElement;
-			const headerEl = document.querySelector('.top') as HTMLElement;
-			const bankEl = document.querySelector('.bank') as HTMLElement;
-			if (!boardEl || !headerEl || !bankEl) return;
-			
-			// Use visualViewport for accurate mobile measurements
+			// Get viewport height (use dvh-like calculation)
 			const vh = window.visualViewport?.height ?? window.innerHeight;
 			const vw = window.visualViewport?.width ?? window.innerWidth;
 			
 			// Measure actual heights of header and bank
+			const headerEl = document.querySelector('.top') as HTMLElement;
+			const bankEl = document.querySelector('.bank') as HTMLElement;
+			const boardEl = document.querySelector('.board') as HTMLElement;
+			
+			if (!headerEl || !bankEl || !boardEl) return;
+			
 			const headerHeight = headerEl.getBoundingClientRect().height;
 			const bankHeight = bankEl.getBoundingClientRect().height;
 			
-			// Calculate available space with generous padding
-			const verticalPadding = 16; // Safety margin
-			const horizontalPadding = 20; // 10px each side
-			const availableHeight = vh - headerHeight - bankHeight - verticalPadding;
-			const availableWidth = vw - horizontalPadding;
+			// Calculate available space for board with some padding
+			const padding = 20; // total vertical padding
+			const availableHeight = vh - headerHeight - bankHeight - padding;
+			const availableWidth = vw - 20; // 10px padding each side
 			
-			// Board is 12 columns x 11 rows
+			// Board is 12 cols x 11 rows - calculate max cell size that fits
 			const border = 2; // 1px border each side
+			const maxCellFromWidth = Math.floor((availableWidth - border) / 12);
+			const maxCellFromHeight = Math.floor((availableHeight - border) / 11);
 			
-			// Calculate maximum cell size that fits in both dimensions
-			const maxCellW = Math.floor((availableWidth - border) / 12);
-			const maxCellH = Math.floor((availableHeight - border) / 11);
+			// Use the smaller dimension to ensure board fits without clipping
+			// Subtract 2px extra margin to be safe
+			cellSize = Math.min(maxCellFromWidth, maxCellFromHeight) - 2;
 			
-			// Use smaller dimension with 3px extra safety margin
-			let cellSize = Math.min(maxCellW, maxCellH) - 3;
-			if (cellSize < 12) cellSize = 12; // minimum usable size
+			// Clamp to reasonable range
+			if (cellSize < 16) cellSize = 16;
+			if (cellSize > 50) cellSize = 50;
 			
 			// Calculate exact board dimensions
 			const boardWidth = (cellSize * 12) + border;
 			const boardHeight = (cellSize * 11) + border;
 			
-			// Set CSS variable for cell size - used by both grid and shadows
-			boardEl.style.setProperty('--cell-size', `${cellSize}px`);
-			
-			// Set explicit board dimensions
+			// Apply to board element with explicit pixel values
 			boardEl.style.width = `${boardWidth}px`;
 			boardEl.style.height = `${boardHeight}px`;
+			boardEl.style.setProperty('--cell-size', `${cellSize}px`);
 		};
 		
-		// Initial calculation with small delay to ensure DOM is ready
-		setTimeout(calculateBoardSize, 100);
+		// Initial calculation after DOM is ready
+		setTimeout(calculateBoardSize, 50);
 		
-		// Recalculate on resize - but not during drag or placement
+		// Recalculate on resize
 		const handleResize = () => {
-			if (!viewportLocked && !placementMode) {
+			if (!placementMode) {
 				calculateBoardSize();
 			}
 		};
@@ -201,12 +173,6 @@
 		if (window.visualViewport) {
 			window.visualViewport.addEventListener('resize', handleResize);
 		}
-
-		const resizeObserver = new ResizeObserver(() => {
-			calculateBoardSize();
-		});
-		const wrapEl = document.querySelector('.boardWrap') as HTMLElement;
-		if (wrapEl) resizeObserver.observe(wrapEl);
 		
 		
 		startNewGame();
@@ -295,13 +261,9 @@
 			if (window.visualViewport) {
 				window.visualViewport.removeEventListener('resize', handleResize);
 			}
-			if (holdTimer) {
-				clearTimeout(holdTimer);
-			}
 			if (shadowTimer) {
 				clearTimeout(shadowTimer);
 			}
-			resizeObserver.disconnect();
 		};
 	});
 
@@ -340,8 +302,7 @@
 			return lenB - lenA; // Descending order
 		});
 		sticks = newSticks;
-		// FIXED: createEmptyBoard(rows, cols) - 11 rows, 12 columns to match UI grid
-		board = createEmptyBoard(11, 12);
+		board = createEmptyBoard(12, 11);
 		history = [];
 		redoHistory = [];
 		selectedSid = null;
@@ -439,24 +400,14 @@
 		sticks = [...sticks].reverse();
 	}
 
-	// ---- placing via tap
+	// ---- placing via tap (simplified for v0.28)
 	async function tapPlace(r: number, c: number): Promise<boolean> {
 		if (!selectedSid) return false;
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return false;
 		
-		// CRITICAL: Set placement mode - this completely disables drag
+		// Set placement mode to prevent resize during placement
 		placementMode = true;
-		
-		// CRITICAL: Completely clear any drag state
-		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-		viewportLocked = false;
-		
-		// CRITICAL: Cancel any hold timer
-		if (holdTimer) {
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
 		
 		// Bounds check
 		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) {
@@ -470,7 +421,6 @@
 			return false;
 		}
 
-		viewportLocked = true;
 		await tick();
 		
 		pushHistory();
@@ -482,19 +432,11 @@
 		board = newBoard;
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
-		hoverCell = null;
-		lastHoverCell = null;
 		clearShadow();
 		
-		// CRITICAL: Clear placement mode and drag state
 		placementMode = false;
-		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
 		
 		await tick();
-		
-		setTimeout(() => {
-			viewportLocked = false;
-		}, 150);
 		
 		return true;
 	}
@@ -514,215 +456,37 @@
 		selectedSid = null;
 	}
 	
+	// ========== SIMPLIFIED CELL HANDLERS (v0.28) ==========
+	// Removed all drag logic - using simple tap-based placement only
+	
 	async function handleCellClick(r: number, c: number, e?: MouseEvent) {
-		// Prevent default to avoid text selection
 		if (e) {
 			e.preventDefault();
 			e.stopPropagation();
 		}
 		
-		// Don't handle click if we're dragging or in placement mode
-		if (dragState.isDragging || placementMode) {
-			return;
-		}
+		if (placementMode) return;
 		
 		// Two-tap placement: first tap shows shadow, second tap places
 		if (selectedSid) {
-			const selectedStick = sticks.find(s => s.sid === selectedSid);
-			if (selectedStick && !selectedStick.placed) {
-				// Check if this is second tap on same cell
+			const stick = sticks.find(s => s.sid === selectedSid);
+			if (stick && !stick.placed) {
 				if (shadowCell && shadowCell.r === r && shadowCell.c === c) {
-					// Second tap: place the stick
+					// Second tap on same cell: place the stick
 					const placed = await tapPlace(r, c);
-					if (placed) {
-						clearShadow();
-						return;
-					}
-				} else {
-					// First tap: show shadow
-					showShadow(r, c);
+					if (placed) clearShadow();
 					return;
 				}
+				// First tap (or tap on different cell): show/move shadow
+				showShadow(r, c);
+				return;
 			}
 		}
 		
-		// If cell has content, select its stick
-		if (board.cells[r] && board.cells[r][c]) {
-			tapCellSelect(r, c);
-		}
-	}
-	
-	function handleCellMouseEnter(r: number, c: number) {
-	if (dragState.isDragging) {
-			hoverCell = { r, c };
-			lastHoverCell = { r, c };
-		}
-	}
-	
-	function handleCellMouseMove(r: number, c: number) {
-	if (dragState.isDragging) {
-			hoverCell = { r, c };
-			lastHoverCell = { r, c };
-		}
-	}
-	
-	function handleCellMouseLeave() {
-		// Don't clear hoverCell if we're dragging - we need to track position globally
-		if (!dragState.isDragging) {
-			hoverCell = null;
-			lastHoverCell = null;
-		}
-	}
-	
-	function handleCellMouseDown(r: number, c: number, e: MouseEvent) {
-		// Prevent default to avoid text selection
-		e.preventDefault();
-		e.stopPropagation();
-		
-	if (!dragEnabled) {
-		return;
-	}
-
-		// CRITICAL: Don't start drag if we have a new stick selected from bag
-		// Only allow dragging of PLACED sticks, not new sticks being placed
-		if (selectedSid) {
-			// User is trying to place a new stick - don't start drag
-			return;
-		}
-		
-		// Clear any existing drag state
-		if (dragState.isDragging) {
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-		}
-		
-		// Check if there's a placed stick at this cell
-		const cell = board.cells[r][c];
+		// If cell has a placed stick, select it
+		const cell = board.cells[r]?.[c];
 		if (cell && cell.stickIds.length > 0) {
-			// Verify this stick is actually placed (not just selected from bag)
-			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
-			const stick = sticks.find(s => s.sid === sidToDrag);
-			if (stick && stick.placed) {
-				// Start hold timer for drag
-				holdTimer = setTimeout(() => {
-					// Hold completed - start drag
-					const cluster = findCluster(sidToDrag);
-					dragState = {
-						isDragging: true,
-						dragSid: sidToDrag,
-						dragStartCell: { r, c },
-						dragCluster: cluster
-					};
-					selectedPlacedSid = sidToDrag;
-					selectedSid = null; // Clear bag selection
-					hoverCell = { r, c }; // Initialize hover cell
-					lastHoverCell = { r, c };
-					holdTimer = null;
-					// Lock viewport during drag to prevent board shifting
-					viewportLocked = true;
-				}, HOLD_DELAY);
-			}
-		}
-	}
-	
-	function handleCellMouseUp(r: number, c: number, e: MouseEvent) {
-		e.preventDefault();
-		
-	if (!dragEnabled) {
-		return;
-	}
-
-		// CRITICAL: Never handle drag if in placement mode
-		if (placementMode) {
-			return;
-		}
-		
-		// Clear hold timer if it exists
-		if (holdTimer) {
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
-		
-		// Handle drag end - use current hoverCell or this cell
-		if (dragState.isDragging) {
-			const targetCell = hoverCell || { r, c };
-			// Calculate offset from drag start
-			if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
-				const offsetR = targetCell.r - dragState.dragStartCell.r;
-				const offsetC = targetCell.c - dragState.dragStartCell.c;
-				
-				// Get first stick's position
-				const firstSid = dragState.dragCluster[0];
-				const firstPlaced = board.placed[firstSid];
-				if (firstPlaced) {
-					const newR = firstPlaced.row + offsetR;
-					const newC = firstPlaced.col + offsetC;
-					
-					// Try to move the cluster
-					moveCluster(dragState.dragCluster, newR, newC).then((success) => {
-						if (success) {
-							// Success - clear drag state
-							dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-							hoverCell = null;
-							lastHoverCell = null;
-							selectedPlacedSid = null;
-						}
-					});
-					return;
-				}
-			}
-			
-			// Drag failed or cancelled - clear drag state
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-			hoverCell = null;
-			lastHoverCell = null;
-		}
-	}
-	
-	// Global mouseup handler to catch drag end even if mouse leaves board
-	function handleGlobalMouseUp(e: MouseEvent) {
-		if (dragState.isDragging) {
-			// Find which cell the mouse is over
-			const element = document.elementFromPoint(e.clientX, e.clientY);
-			if (element) {
-				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-				if (cellEl) {
-					const r = parseInt(cellEl.dataset.r || '0');
-					const c = parseInt(cellEl.dataset.c || '0');
-					if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
-						handleCellMouseUp(r, c, e);
-						return;
-					}
-				}
-			}
-			// Mouse not over a cell - cancel drag
-			if (holdTimer) {
-				clearTimeout(holdTimer);
-				holdTimer = null;
-			}
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-			hoverCell = null;
-			lastHoverCell = null;
-		}
-	}
-	
-	// Global mousemove handler to track drag position even outside cells
-	function handleGlobalMouseMove(e: MouseEvent) {
-		if (dragState.isDragging) {
-			// Find which cell the mouse is over
-			const element = document.elementFromPoint(e.clientX, e.clientY);
-			if (element) {
-				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-				if (cellEl) {
-					const r = parseInt(cellEl.dataset.r || '0');
-					const c = parseInt(cellEl.dataset.c || '0');
-					if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
-						if (!hoverCell || hoverCell.r !== r || hoverCell.c !== c) {
-							hoverCell = { r, c };
-							lastHoverCell = { r, c };
-						}
-					}
-				}
-			}
+			tapCellSelect(r, c);
 		}
 	}
 	
@@ -732,8 +496,7 @@
 		const cell = board.cells[r][c];
 		if (cell && cell.stickIds.length > 0) {
 			if (cell.stickIds.length === 1) {
-				const sid = cell.stickIds[0];
-				selectedPlacedSid = sid;
+				selectedPlacedSid = cell.stickIds[0];
 				returnSelectedPlaced();
 			} else {
 				disassembleCluster(r, c);
@@ -741,404 +504,94 @@
 		}
 	}
 	
-	function handleCellTouchStart(r: number, c: number, e: TouchEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		
-	if (!dragEnabled) {
-		return;
-	}
-
-		// CRITICAL: If in placement mode or new stick selected, NEVER allow drag
-		if (placementMode || selectedSid) {
-			const selectedStick = selectedSid ? sticks.find(s => s.sid === selectedSid) : null;
-			if (placementMode || (selectedStick && !selectedStick.placed)) {
-				// Completely disable drag
-				dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-				if (holdTimer) {
-					clearTimeout(holdTimer);
-					holdTimer = null;
-				}
-				touchCell = { r, c };
-				lastTouchCell = { r, c };
-				return;
-			}
-		}
-		
-		// Clear any existing hold timer
-		if (holdTimer) {
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
-		
-		// Clear any existing drag state
-		if (dragState.isDragging) {
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-		}
-		
-		// Check if there's a placed stick at this cell
-		const cell = board.cells[r][c];
-		if (cell && cell.stickIds.length > 0) {
-			// Verify this stick is actually placed (not just selected from bag)
-			const sidToDrag = cell.stickIds[cell.stickIds.length - 1];
-			const stick = sticks.find(s => s.sid === sidToDrag);
-			if (stick && stick.placed) {
-				// Start hold timer for drag
-					holdTimer = setTimeout(() => {
-						// Hold completed - start drag
-						const cluster = findCluster(sidToDrag);
-						dragState = {
-							isDragging: true,
-							dragSid: sidToDrag,
-							dragStartCell: { r, c },
-							dragCluster: cluster
-						};
-						selectedPlacedSid = sidToDrag;
-						selectedSid = null; // Clear bag selection
-						touchCell = { r, c }; // Initialize touch cell
-						lastTouchCell = { r, c };
-						holdTimer = null;
-						// Lock viewport during drag to prevent board shifting
-						viewportLocked = true;
-					}, HOLD_DELAY);
-			}
-		}
-	}
-	
-	function handleCellTouchMove(r: number, c: number, e: TouchEvent) {
-		// CRITICAL: Always prevent default to stop zoom/scroll
-		e.preventDefault();
-		e.stopPropagation();
-		
-	if (!dragEnabled) {
-		return;
-	}
-
-		// If dragging a placed stick, cancel hold timer and update drag position
-		if (holdTimer) {
-			// Moved too much - cancel hold timer
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
-		
-		if (dragState.isDragging) {
-			// Update drag position
-			if (e.touches.length > 0) {
-				const touch = e.touches[0];
-				const element = document.elementFromPoint(touch.clientX, touch.clientY);
-				if (element) {
-					const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-					if (cellEl) {
-						const newR = parseInt(cellEl.dataset.r || '0');
-						const newC = parseInt(cellEl.dataset.c || '0');
-						if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
-							touchCell = { r: newR, c: newC };
-							lastTouchCell = { r: newR, c: newC };
-						}
-					}
-				}
-			}
-		} else if (selectedSid) {
-			// Update touch position while moving finger - only if cell changed (prevents flicker)
-			if (e.touches.length > 0) {
-				const touch = e.touches[0];
-				const element = document.elementFromPoint(touch.clientX, touch.clientY);
-				if (element) {
-					const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-					if (cellEl) {
-						const newR = parseInt(cellEl.dataset.r || '0');
-						const newC = parseInt(cellEl.dataset.c || '0');
-						if (newR >= 0 && newR < board.rows && newC >= 0 && newC < board.cols) {
-							// Only update if moving to a different cell
-							if (!lastTouchCell || lastTouchCell.r !== newR || lastTouchCell.c !== newC) {
-								touchCell = { r: newR, c: newC };
-								lastTouchCell = { r: newR, c: newC };
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	
+	// Touch handlers - CRITICAL: Use with |nonpassive modifier in template
 	function handleCellTouchEnd(r: number, c: number, e: TouchEvent) {
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Clear hold timer if it exists
-		if (holdTimer) {
-			clearTimeout(holdTimer);
-			holdTimer = null;
-		}
-		
-		// CRITICAL FIX: Get the actual cell where touch ended, not where it started
-		// Use changedTouches[0] for the touch that ended
-		let endCell = { r, c };
+		// Get the cell where touch actually ended
+		let finalR = r, finalC = c;
 		if (e.changedTouches && e.changedTouches.length > 0) {
 			const touch = e.changedTouches[0];
 			const element = document.elementFromPoint(touch.clientX, touch.clientY);
 			if (element) {
 				const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
 				if (cellEl) {
-					const endR = parseInt(cellEl.dataset.r || '0');
-					const endC = parseInt(cellEl.dataset.c || '0');
-					if (endR >= 0 && endR < board.rows && endC >= 0 && endC < board.cols) {
-						endCell = { r: endR, c: endC };
+					const touchR = parseInt(cellEl.dataset.r || '0');
+					const touchC = parseInt(cellEl.dataset.c || '0');
+					if (touchR >= 0 && touchR < 11 && touchC >= 0 && touchC < 12) {
+						finalR = touchR;
+						finalC = touchC;
 					}
 				}
 			}
 		}
 		
-		// Use touchCell if available (most recent tracked position), otherwise use endCell
-		const finalCell = touchCell || endCell;
+		if (placementMode) return;
 		
-	if (!dragEnabled) {
-		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-		viewportLocked = false;
-	}
-
-		// CRITICAL: Never handle drag if in placement mode
-		if (placementMode) {
-			return;
-		}
+		const now = Date.now();
 		
-		// Handle drag end - ONLY if actually dragging a PLACED stick
-		if (dragState.isDragging && finalCell && dragState.dragSid) {
-			// Verify we're dragging a placed stick, not placing a new one
-			const draggedStick = sticks.find(s => s.sid === dragState.dragSid);
-			if (draggedStick && draggedStick.placed) {
-				// Calculate offset from drag start
-				if (dragState.dragStartCell && dragState.dragCluster.length > 0) {
-					const offsetR = finalCell.r - dragState.dragStartCell.r;
-					const offsetC = finalCell.c - dragState.dragStartCell.c;
-					
-					// Get first stick's position
-					const firstSid = dragState.dragCluster[0];
-					const firstPlaced = board.placed[firstSid];
-					if (firstPlaced) {
-						const newR = firstPlaced.row + offsetR;
-						const newC = firstPlaced.col + offsetC;
-						
-						// Try to move the cluster (will return true if offset is 0, preventing unnecessary moves)
-						moveCluster(dragState.dragCluster, newR, newC).then((success) => {
-							if (success) {
-								// Success - clear drag state
-								dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-								touchCell = null;
-								lastTouchCell = null;
-								selectedPlacedSid = null;
-								// Unlock viewport after drag
-								viewportLocked = false;
-							} else {
-								// Failed - unlock anyway
-								viewportLocked = false;
-							}
-						});
-						return;
-					}
+		// If we have a stick selected from bag, handle two-tap placement
+		if (selectedSid) {
+			const stick = sticks.find(s => s.sid === selectedSid);
+			if (stick && !stick.placed) {
+				if (shadowCell && shadowCell.r === finalR && shadowCell.c === finalC) {
+					// Second tap on same cell: place the stick
+					tapPlace(finalR, finalC).then(placed => {
+						if (placed) {
+							clearShadow();
+							lastTapTime = 0;
+							lastTapCell = null;
+						}
+					});
+					return;
 				}
-			}
-			
-			// Drag failed or cancelled - clear drag state
-			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-			viewportLocked = false;
-		}
-		
-		// Clear touch tracking
-		touchCell = null;
-		lastTouchCell = null;
-		
-	const now = Date.now();
-
-	// If placing a new stick, skip double-tap logic entirely
-	if (selectedSid) {
-		const selectedStick = sticks.find(s => s.sid === selectedSid);
-		if (selectedStick && !selectedStick.placed) {
-			// Second tap places if the first cell of shadow is tapped
-			if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
-				tapPlace(finalCell.r, finalCell.c).then((placed) => {
-					if (placed) {
-						clearShadow();
-						lastTapTime = 0;
-						lastTapCell = null;
-					}
-				});
+				// First tap (or tap on different cell): show/move shadow
+				showShadow(finalR, finalC);
+				lastTapTime = now;
+				lastTapCell = { r: finalR, c: finalC };
 				return;
 			}
-			// Otherwise move shadow so first cell is at tap position
-			showShadow(finalCell.r, finalCell.c);
-			lastTapTime = now;
-			lastTapCell = { r: finalCell.r, c: finalCell.c };
-			return;
 		}
-	}
-
-	// For touch events, use double-tap detection (only when no stick selected)
+		
+		// Double-tap detection for returning placed sticks
 		const isDoubleTap = 
 			now - lastTapTime < DOUBLE_TAP_DELAY && 
-			lastTapCell?.r === finalCell.r && 
-			lastTapCell?.c === finalCell.c;
+			lastTapCell?.r === finalR && 
+			lastTapCell?.c === finalC;
 		
 		if (isDoubleTap) {
-			// Double tap: return stick or disassemble cluster
-			const cell = board.cells[finalCell.r][finalCell.c];
+			const cell = board.cells[finalR]?.[finalC];
 			if (cell && cell.stickIds.length > 0) {
 				if (cell.stickIds.length === 1) {
-					const sid = cell.stickIds[0];
-					selectedPlacedSid = sid;
+					selectedPlacedSid = cell.stickIds[0];
 					returnSelectedPlaced();
 				} else {
-					disassembleCluster(finalCell.r, finalCell.c);
+					disassembleCluster(finalR, finalC);
 				}
 			}
 			lastTapTime = 0;
 			lastTapCell = null;
-		} else {
-			// Single tap: two-tap placement model
-			if (selectedSid && !dragState.isDragging && !placementMode) {
-				const selectedStick = sticks.find(s => s.sid === selectedSid);
-				// Only handle if it's an unplaced stick from the bag
-				if (selectedStick && !selectedStick.placed) {
-					// Check if this is second tap on same cell
-					if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
-						// Second tap: place the stick
-						tapPlace(finalCell.r, finalCell.c).then((placed) => {
-							if (placed) {
-								clearShadow();
-								lastTapTime = 0;
-								lastTapCell = null;
-							}
-						});
-						return;
-					} else {
-						// First tap: show shadow
-						showShadow(finalCell.r, finalCell.c);
-						lastTapTime = now;
-						lastTapCell = { r: finalCell.r, c: finalCell.c };
-						return;
-					}
-				}
-			}
-			
-			// If cell has content, select its stick (only if not dragging and not placing)
-			if (!dragState.isDragging && !placementMode && board.cells[finalCell.r] && board.cells[finalCell.r][finalCell.c]) {
-				tapCellSelect(finalCell.r, finalCell.c);
-			}
-			
-			lastTapTime = now;
-			lastTapCell = { r: finalCell.r, c: finalCell.c };
+			return;
 		}
+		
+		// Single tap: select the placed stick at this cell
+		const cell = board.cells[finalR]?.[finalC];
+		if (cell && cell.stickIds.length > 0) {
+			tapCellSelect(finalR, finalC);
+		}
+		
+		lastTapTime = now;
+		lastTapCell = { r: finalR, c: finalC };
 	}
 	
-	// Find all sticks in a cluster (connected via intersections)
-	function findCluster(sid: string): string[] {
-		const visited = new Set<string>();
-		const cluster: string[] = [];
-		const queue: string[] = [sid];
-		
-		while (queue.length > 0) {
-			const currentSid = queue.shift()!;
-			if (visited.has(currentSid)) continue;
-			visited.add(currentSid);
-			cluster.push(currentSid);
-			
-			const placed = board.placed[currentSid];
-			if (!placed) continue;
-			
-			// Find all cells this stick occupies
-			const dr = placed.orientation === 'V' ? 1 : 0;
-			const dc = placed.orientation === 'H' ? 1 : 0;
-			
-			for (let i = 0; i < placed.text.length; i++) {
-				const r = placed.row + dr * i;
-				const c = placed.col + dc * i;
-				const cell = board.cells[r]?.[c];
-				if (!cell) continue;
-				
-				// Add all other sticks at this cell to the cluster
-				for (const otherSid of cell.stickIds) {
-					if (otherSid !== currentSid && !visited.has(otherSid)) {
-						queue.push(otherSid);
-					}
-				}
-			}
-		}
-		
-		return cluster;
+	// Global handlers (minimal - no drag tracking needed)
+	function handleGlobalMouseUp(_e: MouseEvent) {
+		// Nothing needed without drag
 	}
 	
-	// Move a cluster of sticks to a new position
-	// CRITICAL: This function should ONLY be called when dragging PLACED sticks
-	// It should NEVER be called when placing NEW sticks from the bag
-	async function moveCluster(clusterSids: string[], newRow: number, newCol: number): Promise<boolean> {
-		if (clusterSids.length === 0) return false;
-		
-		// CRITICAL: Verify all sticks in cluster are actually placed
-		for (const sid of clusterSids) {
-			const stick = sticks.find(s => s.sid === sid);
-			if (!stick || !stick.placed) {
-				// Can't move unplaced sticks - this should never happen
-				return false;
-			}
-		}
-		
-		// Get the first stick's original position to calculate offset
-		const firstSid = clusterSids[0];
-		const firstPlaced = board.placed[firstSid];
-		if (!firstPlaced) return false;
-		
-		const rowOffset = newRow - firstPlaced.row;
-		const colOffset = newCol - firstPlaced.col;
-		
-		// CRITICAL: If offset is zero, don't move anything - sticks are already in place
-		if (rowOffset === 0 && colOffset === 0) {
-			return true; // Already in correct position - no movement needed
-		}
-		
-		// Check if all sticks can be moved
-		let tempBoard = structuredClone(board);
-		for (const sid of clusterSids) {
-			const placed = tempBoard.placed[sid];
-			if (!placed) continue;
-			
-			const newR = placed.row + rowOffset;
-			const newC = placed.col + colOffset;
-			
-			// Remove from temp board
-			tempBoard = removeStick(tempBoard, sid);
-			
-			// Check if can place at new position
-			const tempStick: Stick = { sid, text: placed.text, orientation: placed.orientation, placed: true };
-			const ok = canPlaceStick(tempBoard, tempStick, newR, newC, bag.constraints.max_intersections_per_wordpair);
-			if (!ok.ok) {
-				return false; // Can't move cluster
-			}
-			
-			// Place in temp board
-			tempBoard = placeStick(tempBoard, tempStick, newR, newC);
-		}
-		
-		// All checks passed, apply the move in a single batch
-		await tick();
-		
-		pushHistory();
-		
-		// Apply all moves in one go to prevent intermediate re-renders
-		let newBoard = board;
-		for (const sid of clusterSids) {
-			const placed = newBoard.placed[sid];
-			if (!placed) continue;
-			const newR = placed.row + rowOffset;
-			const newC = placed.col + colOffset;
-			newBoard = moveStick(newBoard, sid, newR, newC);
-		}
-		
-		// Single state update
-		board = newBoard;
-		
-		await tick();
-		
-		return true;
+	function handleGlobalMouseMove(_e: MouseEvent) {
+		// Nothing needed without drag
 	}
 	
 	function disassembleCluster(r: number, c: number) {
@@ -1269,7 +722,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.29 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.28 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1309,32 +762,12 @@
 				class="board" 
 				style="--rows: 11; --cols: 12;" 
 				aria-label="12 by 11 board"
-				on:touchmove|nonpassive|preventDefault={(e) => {
-					// CRITICAL: |nonpassive modifier allows preventDefault to work on iOS Safari
-					// Handle touchmove on board to track finger movement across cells
-					if (selectedSid && e.touches.length > 0) {
-						const touch = e.touches[0];
-						const element = document.elementFromPoint(touch.clientX, touch.clientY);
-						if (element) {
-							const cellEl = element.closest('[data-r][data-c]') as HTMLElement;
-							if (cellEl) {
-								const r = parseInt(cellEl.dataset.r || '0');
-								const c = parseInt(cellEl.dataset.c || '0');
-								if (r >= 0 && r < board.rows && c >= 0 && c < board.cols) {
-									// Only update if moving to a different cell
-									if (!lastTouchCell || lastTouchCell.r !== r || lastTouchCell.c !== c) {
-										touchCell = { r, c };
-										lastTouchCell = { r, c };
-									}
-								}
-							}
-						}
-					}
+				on:touchmove|nonpassive|preventDefault|stopPropagation={() => {
+					// Prevent zoom/scroll - handler body empty, modifiers do the work
 				}}
 			>
 				{#each Array(11) as _, r}
 					{#each Array(12) as __, c}
-						<!-- data-r/data-c used by elementFromPoint drag placement -->
 						{@const cell = board.cells[r][c]}
 						{@const cellStickIds = cell ? cell.stickIds : []}
 						{@const cellColor = cellStickIds.length > 0 ? getStickColor(cellStickIds[0]) : 'transparent'}
@@ -1345,25 +778,15 @@
 							data-r={r}
 							data-c={c}
 							on:click={(e) => handleCellClick(r, c, e)}
-							on:mousedown={(e) => {
-								// Prevent text selection on click
-								e.preventDefault();
-								handleCellMouseDown(r, c, e);
+							on:mousedown|preventDefault
+							on:dblclick|stopPropagation={(e) => handleCellDoubleClick(r, c, e)}
+							on:touchstart|nonpassive|preventDefault|stopPropagation={() => {
+								// Just prevent default - actual handling on touchend
 							}}
-							on:mouseup={(e) => {
-								e.preventDefault();
-								handleCellMouseUp(r, c, e);
+							on:touchmove|nonpassive|preventDefault|stopPropagation={() => {
+								// Prevent zoom/scroll
 							}}
-							on:dblclick={(e) => {
-								e.stopPropagation();
-								handleCellDoubleClick(r, c, e);
-							}}
-							on:touchstart|nonpassive|preventDefault={(e) => handleCellTouchStart(r, c, e)}
-							on:touchmove|nonpassive|preventDefault={(e) => handleCellTouchMove(r, c, e)}
-							on:touchend|nonpassive|preventDefault={(e) => handleCellTouchEnd(r, c, e)}
-							on:mouseenter={() => handleCellMouseEnter(r, c)}
-							on:mousemove={() => handleCellMouseMove(r, c)}
-							on:mouseleave={handleCellMouseLeave}
+							on:touchend|nonpassive|preventDefault|stopPropagation={(e) => handleCellTouchEnd(r, c, e)}
 							style="background: {cellStickIds.length > 1 ? `linear-gradient(135deg, ${cellColor} 0%, ${cellColor} 50%, ${cellColor2} 50%, ${cellColor2} 100%)` : cellColor};"
 						>
 							{#if cell}
@@ -1820,7 +1243,7 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		padding: 4px;
+		padding: 0;
 		align-items: center;
 		justify-content: center;
 		margin: 0 auto;
@@ -1835,10 +1258,10 @@
 
 	.board {
 		position: relative;
-		/* CRITICAL: Use fixed pixel cell sizes, not 1fr, to align with shadow positioning */
+		/* Size set explicitly in JS to avoid clipping */
 		display: grid;
-		grid-template-columns: repeat(12, var(--cell-size));
-		grid-template-rows: repeat(11, var(--cell-size));
+		grid-template-columns: repeat(12, 1fr);
+		grid-template-rows: repeat(11, 1fr);
 		gap: 0;
 		overflow: visible;
 		border: 1px solid rgba(255,255,255,0.12);
@@ -1848,10 +1271,9 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Explicit width/height set by JS, but provide sensible defaults */
-		--cell-size: 28px;
-		width: calc(var(--cell-size) * 12 + 2px);
-		height: calc(var(--cell-size) * 11 + 2px);
+		width: auto;
+		height: auto;
+		--cell-size: 24px;
 	}
 
 	/* subtle grid lines */
@@ -1864,15 +1286,15 @@
 		-webkit-user-select: none;
 		touch-action: none; /* Prevent zoom/pan on cells */
 		cursor: pointer; /* show it's clickable */
-		/* Fixed size from grid - no aspect-ratio needed */
-		width: var(--cell-size);
-		height: var(--cell-size);
+		aspect-ratio: 1 / 1; /* ensure square tiles */
 		position: relative;
 		z-index: 1; /* Base z-index for regular cells */
+		transition: opacity 0.1s ease, transform 0.1s ease;
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
+		/* Prevent cell from causing layout shifts */
+		contain: layout style; /* Isolate cell layout */
 		/* CRITICAL: Ensure cells are always clickable even with shadows */
 		pointer-events: auto;
-		box-sizing: border-box;
 	}
 	
 	.cell:active {
