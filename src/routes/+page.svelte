@@ -134,14 +134,54 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Tetris-style: Use CSS calc with viewport units for reliable sizing
-		// Calculate once, then let CSS handle it
+		// Measure actual header/bank heights and set CSS variables
 		const calculateBoardSize = () => {
 			if (viewportLocked || dragState.isDragging) return;
 			
-			// Just set a CSS variable, CSS will handle the rest
-			// We'll use CSS calc() in the stylesheet instead
-			boardSize = 'min(calc((100vw - 40px) * 0.95), calc((100vh - var(--header-height, 200px) - var(--bank-height, 150px) - 20px) * 12 / 11 * 0.95))';
+			setTimeout(() => {
+				if (viewportLocked || dragState.isDragging) return;
+				
+				const headerEl = document.querySelector('.top') as HTMLElement;
+				const bankEl = document.querySelector('.bank') as HTMLElement;
+				const boardEl = document.querySelector('.board') as HTMLElement;
+				
+				if (!headerEl || !bankEl || !boardEl) return;
+				
+				// Measure actual heights
+				const headerHeight = headerEl.offsetHeight;
+				const bankHeight = bankEl.offsetHeight;
+				
+				// Set CSS variables for accurate calculation
+				document.documentElement.style.setProperty('--header-height', `${headerHeight}px`);
+				document.documentElement.style.setProperty('--bank-height', `${bankHeight}px`);
+				
+				// Calculate available space
+				const vh = window.visualViewport?.height || window.innerHeight;
+				const vw = window.visualViewport?.width || window.innerWidth;
+				const screenPadding = 20; // 10px top + 10px bottom
+				
+				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
+				const availableWidth = vw - 30; // 15px padding each side
+				
+				// Board aspect ratio 12:11
+				const widthBasedHeight = availableWidth * (11 / 12);
+				const heightBasedWidth = availableHeight * (12 / 11);
+				
+				// Use smaller dimension, ensure it fits
+				let boardWidth: number;
+				if (widthBasedHeight <= availableHeight) {
+					boardWidth = availableWidth;
+				} else {
+					boardWidth = heightBasedWidth;
+				}
+				
+				// CRITICAL: Never exceed viewport, be very conservative
+				boardWidth = Math.min(boardWidth, vw - 30);
+				boardWidth = Math.max(boardWidth, 300);
+				
+				// Set explicit width
+				boardEl.style.width = `${boardWidth}px`;
+			}, 150);
 		};
 		
 		calculateBoardSize();
@@ -353,11 +393,15 @@
 	
 	// Show shadow at cell and start auto-remove timer
 	function showShadow(r: number, c: number) {
+		// Bounds check - CRITICAL to prevent wrong shadow position
+		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) {
+			return;
+		}
 		// Clear existing timer
 		if (shadowTimer) {
 			clearTimeout(shadowTimer);
 		}
-		// Set new shadow cell
+		// Set new shadow cell - ensure it's valid
 		shadowCell = { r, c };
 		// Start timer to auto-remove after 5 seconds
 		shadowTimer = setTimeout(() => {
@@ -1720,7 +1764,7 @@
 		min-width: 0;
 		min-height: 0;
 		width: 100%;
-		overflow: hidden; /* Prevent any clipping */
+		overflow: visible; /* Allow board to be fully visible */
 		box-sizing: border-box;
 		/* Freeze position - prevent any layout shifts */
 		contain: layout style paint; /* Isolate layout calculations */
@@ -1736,7 +1780,7 @@
 		grid-template-rows: repeat(11, 1fr); /* All 11 rows visible */
 		gap: 0;
 		/* REMOVED border-radius to prevent clipping issues */
-		overflow: hidden; /* Clip to prevent any overflow */
+		overflow: visible; /* Allow full visibility - no clipping */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1744,12 +1788,7 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Tetris-style: Use min() to ensure board fits both width and height */
-		width: min(
-			calc(100vw - 40px), /* Never exceed viewport width minus padding */
-			calc((100vh - 200px) * 12 / 11) /* Height-based calculation, accounting for header/bank */
-		);
-		max-width: calc(100vw - 40px); /* Extra safety */
+		/* Width set by JavaScript to ensure perfect fit */
 		/* CRITICAL: Isolate board from layout changes */
 		contain: layout style paint; /* Prevent layout shifts from affecting board */
 		transform: translateZ(0); /* Force GPU layer - prevents reflows */
