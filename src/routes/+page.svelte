@@ -1170,7 +1170,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.16 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.17 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1367,9 +1367,40 @@
 					{#each sticks as s (s.sid)}
 						<div
 							class="stick {s.placed ? 'ghost' : ''} {selectedSid === s.sid ? 'selected' : ''} {highlightedSid === s.sid ? 'highlighted' : ''}"
-							on:click={() => {
-								// Direct click handler - always works
-								if (!s.placed) {
+							on:click={(e) => {
+								// Only select on actual click, not during scroll
+								if (!s.placed && !e.detail.isScroll) {
+									selectStick(s.sid);
+								}
+							}}
+							on:touchstart={(e) => {
+								// Track touch start for swipe detection
+								const touch = e.touches[0];
+								(e.currentTarget as HTMLElement).dataset.touchStartX = touch.clientX.toString();
+								(e.currentTarget as HTMLElement).dataset.touchStartY = touch.clientY.toString();
+							}}
+							on:touchmove={(e) => {
+								// If moving horizontally, allow scrolling
+								const touch = e.touches[0];
+								const startX = parseFloat((e.currentTarget as HTMLElement).dataset.touchStartX || '0');
+								const startY = parseFloat((e.currentTarget as HTMLElement).dataset.touchStartY || '0');
+								const deltaX = Math.abs(touch.clientX - startX);
+								const deltaY = Math.abs(touch.clientY - startY);
+								// If horizontal movement > vertical, allow scroll
+								if (deltaX > deltaY && deltaX > 5) {
+									(e.currentTarget as HTMLElement).dataset.isScrolling = 'true';
+								}
+							}}
+							on:touchend={(e) => {
+								// Clear scroll flag after a delay
+								const isScrolling = (e.currentTarget as HTMLElement).dataset.isScrolling === 'true';
+								if (isScrolling) {
+									// Don't trigger click if scrolling
+									delete (e.currentTarget as HTMLElement).dataset.isScrolling;
+									delete (e.currentTarget as HTMLElement).dataset.touchStartX;
+									delete (e.currentTarget as HTMLElement).dataset.touchStartY;
+								} else if (!s.placed) {
+									// Only select if not scrolling
 									selectStick(s.sid);
 								}
 							}}
@@ -1595,6 +1626,14 @@
 		display: grid;
 		place-items: center;
 		padding: 6px 0;
+		font-size: 20px;
+		font-weight: 700;
+	}
+
+	.iconBtn.thickStroke {
+		/* Make undo/redo and orientation icons thicker to match other icons */
+		font-weight: 900;
+		text-shadow: 0 0 2px rgba(233, 236, 255, 0.3);
 	}
 
 	.iconBtn:disabled {
@@ -1747,6 +1786,7 @@
 	.shadowOverlay {
 		position: absolute;
 		/* Position using CSS custom properties and calc() based on grid cell size */
+		/* Must account for board's 1px border */
 		top: calc(var(--row) * (100% / 11));
 		left: calc(var(--col) * (100% / 12));
 		width: calc(100% / 12);
@@ -1761,6 +1801,9 @@
 		box-sizing: border-box;
 		/* CRITICAL: Shadows don't affect layout */
 		contain: layout style paint; /* Isolate from layout */
+		/* Ensure perfect alignment with grid cells */
+		margin: 0;
+		padding: 0;
 	}
 
 	.shadowOverlay.shadowValid {
@@ -1980,6 +2023,8 @@
 		flex: 1;
 		min-height: 0;
 		height: auto;
+		/* Allow scrolling on touch */
+		touch-action: pan-x;
 		/* Custom scrollbar */
 		scrollbar-width: thin;
 		scrollbar-color: rgba(255,255,255,0.3) rgba(255,255,255,0.05);
@@ -2028,7 +2073,7 @@
 		margin: 0;
 		user-select: none;
 		-webkit-user-select: none;
-		touch-action: none; /* Prevent zoom/pan on sticks */
+		touch-action: pan-x; /* Allow horizontal scrolling while preserving tap */
 		height: auto;
 		transition: opacity 0.15s ease, transform 0.15s ease, outline 0.3s ease;
 		-webkit-tap-highlight-color: transparent;
