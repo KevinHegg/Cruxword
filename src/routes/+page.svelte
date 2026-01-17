@@ -134,47 +134,14 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Simple, reliable board sizing
+		// Tetris-style: Use CSS calc with viewport units for reliable sizing
+		// Calculate once, then let CSS handle it
 		const calculateBoardSize = () => {
 			if (viewportLocked || dragState.isDragging) return;
 			
-			setTimeout(() => {
-				if (viewportLocked || dragState.isDragging) return;
-				
-				const headerEl = document.querySelector('.top') as HTMLElement;
-				const bankEl = document.querySelector('.bank') as HTMLElement;
-				
-				if (!headerEl || !bankEl) return;
-				
-				const headerHeight = headerEl.offsetHeight;
-				const bankHeight = bankEl.offsetHeight;
-				const screenPadding = 20;
-				
-				const vh = window.visualViewport?.height || window.innerHeight;
-				const vw = window.visualViewport?.width || window.innerWidth;
-				
-				// Very conservative: leave 20px padding on each side
-				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 40; // 20px each side
-				
-				// Board aspect ratio 12:11
-				const widthBasedHeight = availableWidth * (11 / 12);
-				const heightBasedWidth = availableHeight * (12 / 11);
-				
-				// Use smaller dimension, then reduce by 2% for safety
-				let boardWidth: number;
-				if (widthBasedHeight <= availableHeight) {
-					boardWidth = availableWidth * 0.98;
-				} else {
-					boardWidth = heightBasedWidth * 0.98;
-				}
-				
-				// Never exceed viewport
-				boardWidth = Math.min(boardWidth, vw - 40);
-				boardWidth = Math.max(boardWidth, 300);
-				
-				boardSize = `${boardWidth}px`;
-			}, 100);
+			// Just set a CSS variable, CSS will handle the rest
+			// We'll use CSS calc() in the stylesheet instead
+			boardSize = 'min(calc((100vw - 40px) * 0.95), calc((100vh - var(--header-height, 200px) - var(--bank-height, 150px) - 20px) * 12 / 11 * 0.95))';
 		};
 		
 		calculateBoardSize();
@@ -494,16 +461,23 @@
 			return;
 		}
 		
-		// SIMPLE: If stick is selected, try to place it immediately
+		// Two-tap placement: first tap shows shadow, second tap places
 		if (selectedSid) {
 			const selectedStick = sticks.find(s => s.sid === selectedSid);
 			if (selectedStick && !selectedStick.placed) {
-				const placed = await tapPlace(r, c);
-				if (placed) {
-					clearShadow();
+				// Check if this is second tap on same cell
+				if (shadowCell && shadowCell.r === r && shadowCell.c === c) {
+					// Second tap: place the stick
+					const placed = await tapPlace(r, c);
+					if (placed) {
+						clearShadow();
+						return;
+					}
+				} else {
+					// First tap: show shadow
+					showShadow(r, c);
 					return;
 				}
-				// If placement failed, fall through to select cell's stick
 			}
 		}
 		
@@ -904,19 +878,29 @@
 			lastTapTime = 0;
 			lastTapCell = null;
 		} else {
-			// Single tap: SIMPLE - if stick selected, try to place immediately
+			// Single tap: two-tap placement model
 			if (selectedSid && !dragState.isDragging) {
 				const selectedStick = sticks.find(s => s.sid === selectedSid);
 				// Only handle if it's an unplaced stick from the bag
 				if (selectedStick && !selectedStick.placed) {
-					tapPlace(finalCell.r, finalCell.c).then((placed) => {
-						if (placed) {
-							clearShadow();
-							lastTapTime = 0;
-							lastTapCell = null;
-						}
-					});
-					return;
+					// Check if this is second tap on same cell
+					if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
+						// Second tap: place the stick
+						tapPlace(finalCell.r, finalCell.c).then((placed) => {
+							if (placed) {
+								clearShadow();
+								lastTapTime = 0;
+								lastTapCell = null;
+							}
+						});
+						return;
+					} else {
+						// First tap: show shadow
+						showShadow(finalCell.r, finalCell.c);
+						lastTapTime = now;
+						lastTapCell = { r: finalCell.r, c: finalCell.c };
+						return;
+					}
 				}
 			}
 			
@@ -1169,7 +1153,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.22 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.23 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1207,7 +1191,7 @@
 		<div class="boardWrap">
 			<div 
 				class="board" 
-				style="--rows: 11; --cols: 12; width: {boardSize};" 
+				style="--rows: 11; --cols: 12;" 
 				aria-label="12 by 11 board"
 				on:touchmove={(e) => {
 					// CRITICAL: Always prevent default to stop zoom
@@ -1751,7 +1735,7 @@
 		grid-template-columns: repeat(12, 1fr); /* All 12 columns visible */
 		grid-template-rows: repeat(11, 1fr); /* All 11 rows visible */
 		gap: 0;
-		border-radius: 16px;
+		/* REMOVED border-radius to prevent clipping issues */
 		overflow: hidden; /* Clip to prevent any overflow */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
@@ -1760,14 +1744,17 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Size is set by JavaScript based on actual measurements */
+		/* Tetris-style: Use min() to ensure board fits both width and height */
+		width: min(
+			calc(100vw - 40px), /* Never exceed viewport width minus padding */
+			calc((100vh - 200px) * 12 / 11) /* Height-based calculation, accounting for header/bank */
+		);
+		max-width: calc(100vw - 40px); /* Extra safety */
 		/* CRITICAL: Isolate board from layout changes */
 		contain: layout style paint; /* Prevent layout shifts from affecting board */
 		transform: translateZ(0); /* Force GPU layer - prevents reflows */
 		backface-visibility: hidden; /* Prevent visual glitches */
 		isolation: isolate; /* Create new stacking context */
-		/* Ensure board never exceeds container */
-		max-width: 100%;
 	}
 
 	/* subtle grid lines */
