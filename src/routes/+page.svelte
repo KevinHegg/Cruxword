@@ -39,6 +39,21 @@
 	let shadowTimer: ReturnType<typeof setTimeout> | null = null; // timer to auto-remove shadow after 5 seconds
 	const SHADOW_TIMEOUT = 5000; // 5 seconds
 	
+	// Scrolling detection for morpheme bank
+	let bankScrollState: {
+		isScrolling: boolean;
+		scrollStartX: number;
+		scrollStartY: number;
+		touchStartTime: number;
+	} = {
+		isScrolling: false,
+		scrollStartX: 0,
+		scrollStartY: 0,
+		touchStartTime: 0
+	};
+	const SCROLL_THRESHOLD = 10; // pixels
+	const TAP_MAX_TIME = 200; // ms
+	
 	// Custom cursor for dragging stick
 	let dragCursor: string | null = null; // First letter of selected stick for cursor
 	let mouseX = 0;
@@ -1362,45 +1377,57 @@
 				</div>
 			</div>
 
-			<div class="bankScroller" aria-label="Morpheme bank (scroll sideways)">
+			<div 
+				class="bankScroller" 
+				aria-label="Morpheme bank (scroll sideways)"
+				on:scroll={() => {
+					// Mark as scrolling when scroll event fires
+					bankScrollState.isScrolling = true;
+					// Clear scroll flag after scroll ends
+					clearTimeout(bankScrollState.touchStartTime as any);
+					bankScrollState.touchStartTime = setTimeout(() => {
+						bankScrollState.isScrolling = false;
+					}, 150) as any;
+				}}
+			>
 				<div class="bankGrid">
 					{#each sticks as s (s.sid)}
 						<div
 							class="stick {s.placed ? 'ghost' : ''} {selectedSid === s.sid ? 'selected' : ''} {highlightedSid === s.sid ? 'highlighted' : ''}"
-							on:click={(e) => {
-								// Only select on actual click, not during scroll
-								if (!s.placed && !e.detail.isScroll) {
-									selectStick(s.sid);
-								}
-							}}
 							on:touchstart={(e) => {
 								// Track touch start for swipe detection
 								const touch = e.touches[0];
-								(e.currentTarget as HTMLElement).dataset.touchStartX = touch.clientX.toString();
-								(e.currentTarget as HTMLElement).dataset.touchStartY = touch.clientY.toString();
+								bankScrollState.scrollStartX = touch.clientX;
+								bankScrollState.scrollStartY = touch.clientY;
+								bankScrollState.touchStartTime = Date.now() as any;
+								bankScrollState.isScrolling = false;
 							}}
 							on:touchmove={(e) => {
-								// If moving horizontally, allow scrolling
+								// If moving horizontally more than threshold, mark as scrolling
 								const touch = e.touches[0];
-								const startX = parseFloat((e.currentTarget as HTMLElement).dataset.touchStartX || '0');
-								const startY = parseFloat((e.currentTarget as HTMLElement).dataset.touchStartY || '0');
-								const deltaX = Math.abs(touch.clientX - startX);
-								const deltaY = Math.abs(touch.clientY - startY);
-								// If horizontal movement > vertical, allow scroll
-								if (deltaX > deltaY && deltaX > 5) {
-									(e.currentTarget as HTMLElement).dataset.isScrolling = 'true';
+								const deltaX = Math.abs(touch.clientX - bankScrollState.scrollStartX);
+								const deltaY = Math.abs(touch.clientY - bankScrollState.scrollStartY);
+								// If horizontal movement > vertical and > threshold, it's a scroll
+								if (deltaX > deltaY && deltaX > SCROLL_THRESHOLD) {
+									bankScrollState.isScrolling = true;
 								}
 							}}
 							on:touchend={(e) => {
-								// Clear scroll flag after a delay
-								const isScrolling = (e.currentTarget as HTMLElement).dataset.isScrolling === 'true';
-								if (isScrolling) {
-									// Don't trigger click if scrolling
-									delete (e.currentTarget as HTMLElement).dataset.isScrolling;
-									delete (e.currentTarget as HTMLElement).dataset.touchStartX;
-									delete (e.currentTarget as HTMLElement).dataset.touchStartY;
-								} else if (!s.placed) {
-									// Only select if not scrolling
+								// Only select if not scrolling and was a quick tap
+								const touchDuration = Date.now() - (bankScrollState.touchStartTime as any);
+								if (!bankScrollState.isScrolling && touchDuration < TAP_MAX_TIME && !s.placed) {
+									// Small delay to allow scroll to be detected
+									setTimeout(() => {
+										if (!bankScrollState.isScrolling) {
+											selectStick(s.sid);
+										}
+									}, 50);
+								}
+								bankScrollState.isScrolling = false;
+							}}
+							on:click={(e) => {
+								// Desktop: always select on click
+								if (!s.placed && !bankScrollState.isScrolling) {
 									selectStick(s.sid);
 								}
 							}}
