@@ -155,28 +155,28 @@
 				document.documentElement.style.setProperty('--header-height', `${headerHeight}px`);
 				document.documentElement.style.setProperty('--bank-height', `${bankHeight}px`);
 				
-				// Calculate available space
+				// Calculate available space - EXTRA conservative
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.visualViewport?.width || window.innerWidth;
 				const screenPadding = 20; // 10px top + 10px bottom
 				
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 30; // 15px padding each side
+				const availableWidth = vw - 40; // 20px padding each side for safety
 				
 				// Board aspect ratio 12:11
-				const widthBasedHeight = availableWidth * (11 / 12);
-				const heightBasedWidth = availableHeight * (12 / 11);
+				// Calculate cell size first, then board width
+				// Make cells 1px smaller to ensure no clipping
+				const cellWidthFromHeight = (availableHeight - 2) / 11; // -2 for border, divide by 11 rows
+				const cellWidthFromWidth = (availableWidth - 2) / 12; // -2 for border, divide by 12 cols
 				
-				// Use smaller dimension, ensure it fits
-				let boardWidth: number;
-				if (widthBasedHeight <= availableHeight) {
-					boardWidth = availableWidth;
-				} else {
-					boardWidth = heightBasedWidth;
-				}
+				// Use smaller cell size, then subtract 1px per cell for safety
+				const cellSize = Math.min(cellWidthFromHeight, cellWidthFromWidth) - 1;
 				
-				// CRITICAL: Never exceed viewport, be very conservative
-				boardWidth = Math.min(boardWidth, vw - 30);
+				// Board width = (cellSize * 12) + border
+				let boardWidth = (cellSize * 12) + 2;
+				
+				// CRITICAL: Never exceed viewport
+				boardWidth = Math.min(boardWidth, vw - 40);
 				boardWidth = Math.max(boardWidth, 300);
 				
 				// Set explicit width
@@ -432,48 +432,55 @@
 		const stick = sticks.find((s) => s.sid === selectedSid);
 		if (!stick || stick.placed) return false;
 		
-		// CRITICAL: Never place if we're dragging a placed stick
-		if (dragState.isDragging) return false;
+		// CRITICAL: Completely clear any drag state before placement
+		// This ensures settled sticks NEVER move during new stick placement
+		if (dragState.isDragging) {
+			dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+			viewportLocked = false;
+		}
+		
+		// CRITICAL: Cancel any hold timer
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
 		
 		// Bounds check
 		if (r < 0 || r >= board.rows || c < 0 || c >= board.cols) return false;
 
 		// Calculate placement position: clicked tile is where FIRST letter goes
-		// For horizontal: first letter at (r, c), rest extends right
-		// For vertical: first letter at (r, c), rest extends down
-		// So placement row/col is just (r, c)
 		const ok = canPlaceStick(board, stick, r, c, bag.constraints.max_intersections_per_wordpair);
 		if (!ok.ok) {
-			// Silently fail - user will see invalid shadow preview
 			return false;
 		}
 
-		// CRITICAL: Use tick() to batch the update and prevent intermediate re-renders
-		await tick();
-		
 		// Lock viewport during placement to prevent board shift
 		viewportLocked = true;
 		
+		await tick();
+		
 		pushHistory();
 		
-		// Create new board state without touching existing sticks
+		// Place the stick - this should NEVER touch existing sticks
 		const newBoard = placeStick(board, stick, r, c);
 		
-		// Batch all updates together
+		// Update state atomically
 		board = newBoard;
 		sticks = sticks.map((s) => (s.sid === stick.sid ? { ...s, placed: true } : s));
 		selectedSid = null;
 		hoverCell = null;
 		lastHoverCell = null;
-		clearShadow(); // Clear shadow after successful placement
+		clearShadow();
 		
-		// Wait for DOM update
+		// Ensure drag state is completely cleared
+		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		
 		await tick();
 		
-		// Unlock viewport after DOM settles
+		// Unlock viewport
 		setTimeout(() => {
 			viewportLocked = false;
-		}, 100);
+		}, 150);
 		
 		return true;
 	}
@@ -722,13 +729,22 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// CRITICAL: Don't start drag if we have a new stick selected from bag
-		// Only allow dragging of PLACED sticks, not new sticks being placed
+		// CRITICAL: If a new stick is selected, NEVER allow drag to start
+		// This prevents settled sticks from moving when placing new sticks
 		if (selectedSid) {
-			// User is trying to place a new stick - just track position for preview
-			touchCell = { r, c };
-			lastTouchCell = { r, c };
-			return;
+			const selectedStick = sticks.find(s => s.sid === selectedSid);
+			// If it's an unplaced stick, this is for placement, not dragging
+			if (selectedStick && !selectedStick.placed) {
+				// Clear any existing drag state
+				dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+				if (holdTimer) {
+					clearTimeout(holdTimer);
+					holdTimer = null;
+				}
+				// Just track position for shadow preview
+				touchCell = { r, c };
+				lastTouchCell = { r, c };
+				return;
 		}
 		
 		// Clear any existing hold timer
@@ -1197,7 +1213,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.24 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.25 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
