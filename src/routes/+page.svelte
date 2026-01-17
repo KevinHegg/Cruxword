@@ -1197,7 +1197,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.23 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.24 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1290,10 +1290,11 @@
 							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
 							on:touchmove={(e) => {
 					handleCellTouchMove(r, c, e);
-					// Show shadow on touch move
+					// Show shadow on touch move - use the cell coordinates directly
 					if (selectedSid && !dragState.isDragging) {
 						const selectedStick = sticks.find(s => s.sid === selectedSid);
 						if (selectedStick && !selectedStick.placed) {
+							// Use the actual cell r, c - not touchCell which might be wrong
 							showShadow(r, c);
 						}
 					}
