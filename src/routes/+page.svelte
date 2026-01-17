@@ -134,7 +134,7 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Simple, reliable board size calculation
+		// Tetris-style board sizing: calculate cell size first, then board size
 		const calculateBoardSize = () => {
 			// Don't recalculate during drag - freeze board position
 			if (viewportLocked || dragState.isDragging) return;
@@ -151,32 +151,33 @@
 				const headerHeight = headerEl.offsetHeight;
 				const bankHeight = bankEl.offsetHeight;
 				const screenPadding = 20; // 10px top + 10px bottom
+				const boardBorder = 2; // 1px border each side
 				
-				// Use visual viewport for mobile
+				// Use visual viewport for mobile accuracy
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.visualViewport?.width || window.innerWidth;
 				
-				// Conservative calculation - ensure board never clips
+				// Available space - be very conservative
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 24; // 12px padding each side for safety
+				const availableWidth = vw - 30; // 15px padding each side for safety
 				
-				// Board aspect ratio is 12:11 (width:height)
-				const widthBasedHeight = availableWidth * (11 / 12);
-				const heightBasedWidth = availableHeight * (12 / 11);
+				// Board is 12 columns × 11 rows
+				// Calculate cell size based on both dimensions
+				const cellWidthFromHeight = (availableHeight - boardBorder) / 11;
+				const cellWidthFromWidth = (availableWidth - boardBorder) / 12;
 				
-				// Use the smaller dimension to ensure it fits
-				let boardWidth: number;
-				if (widthBasedHeight <= availableHeight) {
-					boardWidth = availableWidth;
-				} else {
-					boardWidth = heightBasedWidth;
-				}
+				// Use the smaller cell size to ensure board fits
+				const cellSize = Math.min(cellWidthFromHeight, cellWidthFromWidth);
 				
-				// Ensure minimum size and maximum (never exceed viewport)
-				boardWidth = Math.max(300, Math.min(boardWidth, vw - 24));
+				// Calculate board width from cell size
+				// Board width = (cellSize * 12) + border
+				const calculatedBoardWidth = (cellSize * 12) + boardBorder;
+				
+				// Ensure it never exceeds viewport
+				const finalBoardWidth = Math.min(calculatedBoardWidth, vw - 30);
 				
 				// Set the size
-				boardSize = `${boardWidth}px`;
+				boardSize = `${finalBoardWidth}px`;
 			}, 50);
 		};
 		
@@ -502,23 +503,37 @@
 			const selectedStick = sticks.find(s => s.sid === selectedSid);
 			if (selectedStick && !selectedStick.placed) {
 				// Check if this is second tap on same cell
-				if (shadowCell && shadowCell.r === r && shadowCell.c === c) {
+				const now = Date.now();
+				const isSameCell = shadowCell && shadowCell.r === r && shadowCell.c === c;
+				const isQuickTap = now - (lastTapTime || 0) < 500;
+				
+				if (isSameCell && isQuickTap) {
 					// Second tap on same cell: place the stick
 					const placed = await tapPlace(r, c);
 					if (placed) {
 						clearShadow();
+						lastTapTime = 0;
+						lastTapCell = null;
+						return;
+					} else {
+						// Placement failed, show shadow again
+						showShadow(r, c);
+						lastTapTime = now;
+						lastTapCell = { r, c };
 						return;
 					}
 				} else {
 					// First tap or tap on different cell: show/move shadow
 					showShadow(r, c);
+					lastTapTime = now;
+					lastTapCell = { r, c };
 					return;
 				}
 			}
 		}
 		
 		// If cell has content, select its stick
-		if (board.cells[r][c]) {
+		if (board.cells[r] && board.cells[r][c]) {
 			tapCellSelect(r, c);
 		}
 	}
@@ -921,14 +936,22 @@
 				const selectedStick = sticks.find(s => s.sid === selectedSid);
 				// Only handle if it's an unplaced stick from the bag
 				if (selectedStick && !selectedStick.placed) {
-					// Check if this is second tap on same cell
-					if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
+					// Check if this is second tap on same cell (within 500ms and same position)
+					const isSameCell = shadowCell && 
+						shadowCell.r === finalCell.r && 
+						shadowCell.c === finalCell.c;
+					const isQuickTap = now - (lastTapTime || 0) < 500;
+					
+					if (isSameCell && isQuickTap) {
 						// Second tap on same cell: place the stick
 						tapPlace(finalCell.r, finalCell.c).then((placed) => {
 							if (placed) {
 								clearShadow();
 								lastTapTime = 0;
 								lastTapCell = null;
+							} else {
+								// Placement failed, show shadow again
+								showShadow(finalCell.r, finalCell.c);
 							}
 						});
 						return;
@@ -943,7 +966,7 @@
 			}
 			
 			// If cell has content, select its stick (only if not dragging)
-			if (!dragState.isDragging && board.cells[finalCell.r][finalCell.c]) {
+			if (!dragState.isDragging && board.cells[finalCell.r] && board.cells[finalCell.r][finalCell.c]) {
 				tapCellSelect(finalCell.r, finalCell.c);
 			}
 			
@@ -1191,7 +1214,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.20 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.21 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1749,7 +1772,7 @@
 		min-width: 0;
 		min-height: 0;
 		width: 100%;
-		overflow: visible;
+		overflow: hidden; /* Prevent any clipping */
 		box-sizing: border-box;
 		/* Freeze position - prevent any layout shifts */
 		contain: layout style paint; /* Isolate layout calculations */
@@ -1765,7 +1788,7 @@
 		grid-template-rows: repeat(11, 1fr); /* All 11 rows visible */
 		gap: 0;
 		border-radius: 16px;
-		overflow: visible; /* Allow board to be fully visible */
+		overflow: hidden; /* Clip to prevent any overflow */
 		border: 1px solid rgba(255,255,255,0.12);
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
@@ -1779,6 +1802,8 @@
 		transform: translateZ(0); /* Force GPU layer - prevents reflows */
 		backface-visibility: hidden; /* Prevent visual glitches */
 		isolation: isolate; /* Create new stacking context */
+		/* Ensure board never exceeds container */
+		max-width: 100%;
 	}
 
 	/* subtle grid lines */
@@ -1798,6 +1823,8 @@
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
 		/* Prevent cell from causing layout shifts */
 		contain: layout style; /* Isolate cell layout */
+		/* CRITICAL: Ensure cells are always clickable even with shadows */
+		pointer-events: auto;
 	}
 	
 	.cell:active {
@@ -1833,11 +1860,12 @@
 	.cell.shadow {
 		position: relative;
 		z-index: 50; /* Higher than regular cells to overlay */
-		pointer-events: none; /* Don't block interactions */
+		pointer-events: none; /* Don't block interactions - allow clicks through to cell */
 		opacity: 0.6; /* More subtle */
 		margin: 0;
 		padding: 0;
 		/* Shadows are rendered after regular cells, so they overlay with z-index */
+		/* CRITICAL: pointer-events: none ensures underlying cell is clickable */
 	}
 
 	.cell.shadow.shadowValid {
