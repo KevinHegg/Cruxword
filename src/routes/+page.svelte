@@ -22,8 +22,6 @@
 	
 	// Board size calculated dynamically based on actual element heights
 	let boardSize = '400px'; // fallback
-	let cellSize = 0; // Actual pixel size of each cell (for shadow positioning)
-	let boardElement: HTMLElement | null = null; // Reference to board element
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -136,66 +134,50 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Calculate board size using ResizeObserver for accurate measurements
+		// Simple, reliable board size calculation
 		const calculateBoardSize = () => {
 			// Don't recalculate during drag - freeze board position
 			if (viewportLocked || dragState.isDragging) return;
 			
-			// Wait for DOM to be ready
-			requestAnimationFrame(() => {
-				// Double-check we're not in drag state
+			setTimeout(() => {
 				if (viewportLocked || dragState.isDragging) return;
 				
 				const headerEl = document.querySelector('.top') as HTMLElement;
 				const bankEl = document.querySelector('.bank') as HTMLElement;
-				const boardEl = document.querySelector('.board') as HTMLElement;
 				
-				if (!headerEl || !bankEl || !boardEl) return;
+				if (!headerEl || !bankEl) return;
 				
 				// Measure actual heights
 				const headerHeight = headerEl.offsetHeight;
 				const bankHeight = bankEl.offsetHeight;
 				const screenPadding = 20; // 10px top + 10px bottom
 				
-				// Available space - use visual viewport for mobile accuracy
+				// Use visual viewport for mobile
 				const vh = window.visualViewport?.height || window.innerHeight;
 				const vw = window.visualViewport?.width || window.innerWidth;
 				
-				// Calculate available space more accurately
+				// Conservative calculation - ensure board never clips
 				const availableHeight = vh - headerHeight - bankHeight - screenPadding;
-				const availableWidth = vw - 20; // 10px padding each side
+				const availableWidth = vw - 24; // 12px padding each side for safety
 				
 				// Board aspect ratio is 12:11 (width:height)
-				// Calculate what size fits both constraints
 				const widthBasedHeight = availableWidth * (11 / 12);
 				const heightBasedWidth = availableHeight * (12 / 11);
 				
-				// Use the smaller dimension to ensure it fits, but be more generous
+				// Use the smaller dimension to ensure it fits
 				let boardWidth: number;
 				if (widthBasedHeight <= availableHeight) {
-					// Width is the limiting factor - use 98% to ensure no clipping
-					boardWidth = availableWidth * 0.98;
+					boardWidth = availableWidth;
 				} else {
-					// Height is the limiting factor
-					boardWidth = heightBasedWidth * 0.98;
+					boardWidth = heightBasedWidth;
 				}
 				
-				// Ensure minimum size
-				boardWidth = Math.max(boardWidth, 300);
+				// Ensure minimum size and maximum (never exceed viewport)
+				boardWidth = Math.max(300, Math.min(boardWidth, vw - 24));
 				
 				// Set the size
 				boardSize = `${boardWidth}px`;
-				boardElement = boardEl;
-				
-				// Calculate actual cell size after board is sized
-				requestAnimationFrame(() => {
-					if (boardEl) {
-						const boardRect = boardEl.getBoundingClientRect();
-						// Account for 1px border on each side
-						cellSize = (boardRect.width - 2) / 12; // 12 columns
-					}
-				});
-			});
+			}, 50);
 		};
 		
 		calculateBoardSize();
@@ -211,28 +193,6 @@
 			window.visualViewport.addEventListener('resize', handleResize);
 		}
 		
-		// Use ResizeObserver for more accurate board sizing
-		let resizeObserver: ResizeObserver | null = null;
-		setTimeout(() => {
-			resizeObserver = new ResizeObserver(() => {
-				if (!viewportLocked && !dragState.isDragging) {
-					calculateBoardSize();
-				}
-			});
-			
-			// Observe header and bank for size changes
-			const headerEl = document.querySelector('.top') as HTMLElement;
-			const bankEl = document.querySelector('.bank') as HTMLElement;
-			if (headerEl) resizeObserver!.observe(headerEl);
-			if (bankEl) resizeObserver!.observe(bankEl);
-		}, 200);
-		
-		// Store resizeObserver for cleanup
-		const cleanupResizeObserver = () => {
-			if (resizeObserver) {
-				resizeObserver.disconnect();
-			}
-		};
 		
 		startNewGame();
 		// Hide cheat sheet on first interaction
@@ -326,8 +286,6 @@
 			if (shadowTimer) {
 				clearTimeout(shadowTimer);
 			}
-			// ResizeObserver cleanup
-			cleanupResizeObserver();
 		};
 	});
 
@@ -1233,7 +1191,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.19 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.20 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1339,7 +1297,7 @@
 				{/each}
 
 				<!-- Shadow preview when stick is selected - two-tap placement model -->
-				<!-- CRITICAL: Shadows are absolutely positioned overlays, NOT grid children -->
+				<!-- Shadows are grid children for perfect alignment -->
 				{#if selectedSid && shadowCell}
 					{@const previewCell = shadowCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
@@ -1351,15 +1309,9 @@
 							{@const shadowR = previewCell.r + dr * i}
 							{@const shadowC = previewCell.c + dc * i}
 							{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
-								{@const cellEl = boardElement?.querySelector(`[data-r="${shadowR}"][data-c="${shadowC}"]`) as HTMLElement}
-								{@const cellRect = cellEl?.getBoundingClientRect()}
-								{@const boardRect = boardElement?.getBoundingClientRect()}
-								{@const topPos = cellRect && boardRect ? cellRect.top - boardRect.top : null}
-								{@const leftPos = cellRect && boardRect ? cellRect.left - boardRect.left : null}
-								{@const size = cellSize || null}
 								<div 
-									class="shadowOverlay {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
-									style="--row: {shadowR}; --col: {shadowC}; {topPos !== null ? `top: ${topPos}px;` : `top: calc(1px + var(--row) * ((100% - 2px) / 11));`} {leftPos !== null ? `left: ${leftPos}px;` : `left: calc(1px + var(--col) * ((100% - 2px) / 12));`} {size !== null ? `width: ${size}px; height: ${size}px;` : `width: calc((100% - 2px) / 12); height: calc((100% - 2px) / 11);`}"
+									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
+									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
 								>
 									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 								</div>
@@ -1877,33 +1829,25 @@
 
 	/* Shadow preview for drag placement - CRITICAL: Absolutely positioned overlays, NOT grid children */
 	/* This prevents shadows from affecting grid layout and causing tile movement */
-	.shadowOverlay {
-		position: absolute;
-		/* Position can be set via inline style (pixels) or CSS calc (fallback) */
-		/* JavaScript sets pixel positions for perfect alignment */
+	/* Shadow cells are grid children for perfect alignment */
+	.cell.shadow {
+		position: relative;
 		z-index: 50; /* Higher than regular cells to overlay */
 		pointer-events: none; /* Don't block interactions */
 		opacity: 0.6; /* More subtle */
-		display: grid;
-		place-items: center;
-		border-right: 1px solid rgba(255,255,255,0.06);
-		border-bottom: 1px solid rgba(255,255,255,0.06);
-		box-sizing: border-box;
-		/* CRITICAL: Shadows don't affect layout */
-		contain: layout style paint; /* Isolate from layout */
-		/* Ensure perfect alignment with grid cells */
 		margin: 0;
 		padding: 0;
+		/* Shadows are rendered after regular cells, so they overlay with z-index */
 	}
 
-	.shadowOverlay.shadowValid {
+	.cell.shadow.shadowValid {
 		outline: 1px solid rgba(132, 255, 160, 0.5); /* More subtle - reduced opacity */
 		outline-offset: -1px;
 		background: rgba(132, 255, 160, 0.1); /* More subtle background */
 		box-shadow: 0 0 2px rgba(132, 255, 160, 0.3); /* Subtle glow */
 	}
 
-	.shadowOverlay.shadowInvalid {
+	.cell.shadow.shadowInvalid {
 		outline: 1px solid rgba(255, 100, 100, 0.5); /* More subtle red */
 		outline-offset: -1px;
 		background: rgba(255, 100, 100, 0.15); /* More subtle red background */
