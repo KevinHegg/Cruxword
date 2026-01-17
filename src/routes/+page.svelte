@@ -1435,7 +1435,12 @@
 					<button class="iconBtn thickStroke" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
 					<button class="iconBtn thickStroke rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
 					<button class="iconBtn thickStroke" on:click={sortSticksByLength} title="Reverse stick order (mirror horizontally)">⇅</button>
-					<button class="iconBtn" on:click={() => (showCheat = !showCheat)} title="Help & Dev Tools">?</button>
+					<button class="iconBtn" on:click={() => {
+						showCheat = !showCheat;
+						if (!showCheat && typeof sessionStorage !== 'undefined') {
+							sessionStorage.setItem('cruxword-quickstart-dismissed', 'true');
+						}
+					}} title="Help & Dev Tools">?</button>
 				</div>
 			</div>
 
