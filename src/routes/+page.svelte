@@ -745,6 +745,7 @@
 				touchCell = { r, c };
 				lastTouchCell = { r, c };
 				return;
+			}
 		}
 		
 		// Clear any existing hold timer
