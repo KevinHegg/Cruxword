@@ -1287,7 +1287,6 @@
 				<!-- Shadows are grid children for perfect alignment -->
 				{#if selectedSid && (shadowCell || hoverCell || touchCell)}
 					{@const previewCell = shadowCell || hoverCell || touchCell}
-					{@const previewCell = shadowCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
 					{#if selectedStick && !selectedStick.placed && previewCell}
 						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
