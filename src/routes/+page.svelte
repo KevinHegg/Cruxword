@@ -10,7 +10,8 @@
 	let bag: MorphemeBag = pickRandomBag();
 	let bagIssues: string[] = [];
 	let sticks: Stick[] = [];
-	let board: BoardState = createEmptyBoard(12, 11);
+	// FIXED: createEmptyBoard(rows, cols) - UI expects 11 rows, 12 columns
+	let board: BoardState = createEmptyBoard(11, 12);
 
 	let selectedSid: string | null = null;
 	// Use sessionStorage to remember if user dismissed quickstart
@@ -22,6 +23,9 @@
 	
 	// Board size calculated dynamically based on actual element heights
 	let boardSize = '400px'; // fallback
+
+	// Disable drag entirely per placement rules
+	const dragEnabled = false;
 	
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
@@ -137,17 +141,51 @@
 			dictionaryLoaded = true;
 		});
 		
-		// Use CSS-based sizing with viewport constraints - no JavaScript calculations
+		// Size board by measured container and integer cell size
+		// CRITICAL: Use fixed pixel sizes for both grid and shadows to ensure alignment
 		const calculateBoardSize = () => {
-			// Just trigger a resize event - CSS will handle sizing
-			// This is a no-op, CSS does all the work
+			if (viewportLocked || placementMode) return;
+			requestAnimationFrame(() => {
+				if (viewportLocked || placementMode) return;
+				const wrapEl = document.querySelector('.boardWrap') as HTMLElement;
+				const boardEl = document.querySelector('.board') as HTMLElement;
+				if (!wrapEl || !boardEl) return;
+
+				// Measure available space
+				const wrapRect = wrapEl.getBoundingClientRect();
+				const availableWidth = Math.floor(wrapRect.width);
+				const availableHeight = Math.floor(wrapRect.height);
+				
+				// Reserve space for border (1px each side = 2px total)
+				const border = 2;
+				
+				// Calculate maximum cell size that fits
+				// Board is 12 columns x 11 rows
+				const maxCellW = Math.floor((availableWidth - border) / 12);
+				const maxCellH = Math.floor((availableHeight - border) / 11);
+				
+				// Use the smaller dimension to ensure board fits, with 2px safety margin
+				let cellSize = Math.min(maxCellW, maxCellH) - 2;
+				if (cellSize < 10) cellSize = 10; // minimum usable size
+				
+				// Calculate exact board dimensions
+				const boardWidth = (cellSize * 12) + border;
+				const boardHeight = (cellSize * 11) + border;
+				
+				// Set CSS variable for cell size - used by both grid and shadows
+				boardEl.style.setProperty('--cell-size', `${cellSize}px`);
+				
+				// Set explicit board dimensions
+				boardEl.style.width = `${boardWidth}px`;
+				boardEl.style.height = `${boardHeight}px`;
+			});
 		};
 		
 		calculateBoardSize();
 		
 		// Recalculate on resize - but not during drag or placement
 		const handleResize = () => {
-			if (!viewportLocked && !dragState.isDragging && !placementMode) {
+			if (!viewportLocked && !placementMode) {
 				calculateBoardSize();
 			}
 		};
@@ -155,6 +193,12 @@
 		if (window.visualViewport) {
 			window.visualViewport.addEventListener('resize', handleResize);
 		}
+
+		const resizeObserver = new ResizeObserver(() => {
+			calculateBoardSize();
+		});
+		const wrapEl = document.querySelector('.boardWrap') as HTMLElement;
+		if (wrapEl) resizeObserver.observe(wrapEl);
 		
 		
 		startNewGame();
@@ -249,6 +293,7 @@
 			if (shadowTimer) {
 				clearTimeout(shadowTimer);
 			}
+			resizeObserver.disconnect();
 		};
 	});
 
@@ -287,7 +332,8 @@
 			return lenB - lenA; // Descending order
 		});
 		sticks = newSticks;
-		board = createEmptyBoard(12, 11);
+		// FIXED: createEmptyBoard(rows, cols) - 11 rows, 12 columns to match UI grid
+		board = createEmptyBoard(11, 12);
 		history = [];
 		redoHistory = [];
 		selectedSid = null;
@@ -499,29 +545,16 @@
 	}
 	
 	function handleCellMouseEnter(r: number, c: number) {
-		// Show shadow preview on hover (desktop)
-		if (dragState.isDragging) {
+	if (dragState.isDragging) {
 			hoverCell = { r, c };
 			lastHoverCell = { r, c };
-		} else if (selectedSid) {
-			const selectedStick = sticks.find(s => s.sid === selectedSid);
-			if (selectedStick && !selectedStick.placed) {
-				// Show shadow at hover position
-				showShadow(r, c);
-			}
 		}
 	}
 	
 	function handleCellMouseMove(r: number, c: number) {
-		// Update shadow preview on mouse move (desktop)
-		if (dragState.isDragging) {
+	if (dragState.isDragging) {
 			hoverCell = { r, c };
 			lastHoverCell = { r, c };
-		} else if (selectedSid) {
-			const selectedStick = sticks.find(s => s.sid === selectedSid);
-			if (selectedStick && !selectedStick.placed) {
-				showShadow(r, c);
-			}
 		}
 	}
 	
@@ -538,6 +571,10 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
+	if (!dragEnabled) {
+		return;
+	}
+
 		// CRITICAL: Don't start drag if we have a new stick selected from bag
 		// Only allow dragging of PLACED sticks, not new sticks being placed
 		if (selectedSid) {
@@ -582,6 +619,10 @@
 	function handleCellMouseUp(r: number, c: number, e: MouseEvent) {
 		e.preventDefault();
 		
+	if (!dragEnabled) {
+		return;
+	}
+
 		// CRITICAL: Never handle drag if in placement mode
 		if (placementMode) {
 			return;
@@ -609,14 +650,16 @@
 					const newC = firstPlaced.col + offsetC;
 					
 					// Try to move the cluster
-					if (moveCluster(dragState.dragCluster, newR, newC)) {
-						// Success - clear drag state
-						dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
-						hoverCell = null;
-						lastHoverCell = null;
-						selectedPlacedSid = null;
-						return;
-					}
+					moveCluster(dragState.dragCluster, newR, newC).then((success) => {
+						if (success) {
+							// Success - clear drag state
+							dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+							hoverCell = null;
+							lastHoverCell = null;
+							selectedPlacedSid = null;
+						}
+					});
+					return;
 				}
 			}
 			
@@ -694,6 +737,10 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
+	if (!dragEnabled) {
+		return;
+	}
+
 		// CRITICAL: If in placement mode or new stick selected, NEVER allow drag
 		if (placementMode || selectedSid) {
 			const selectedStick = selectedSid ? sticks.find(s => s.sid === selectedSid) : null;
@@ -755,6 +802,10 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
+	if (!dragEnabled) {
+		return;
+	}
+
 		// If dragging a placed stick, cancel hold timer and update drag position
 		if (holdTimer) {
 			// Moved too much - cancel hold timer
@@ -833,6 +884,11 @@
 		// Use touchCell if available (most recent tracked position), otherwise use endCell
 		const finalCell = touchCell || endCell;
 		
+	if (!dragEnabled) {
+		dragState = { isDragging: false, dragSid: null, dragStartCell: null, dragCluster: [] };
+		viewportLocked = false;
+	}
+
 		// CRITICAL: Never handle drag if in placement mode
 		if (placementMode) {
 			return;
@@ -884,8 +940,32 @@
 		touchCell = null;
 		lastTouchCell = null;
 		
-		// For touch events, use double-tap detection
-		const now = Date.now();
+	const now = Date.now();
+
+	// If placing a new stick, skip double-tap logic entirely
+	if (selectedSid) {
+		const selectedStick = sticks.find(s => s.sid === selectedSid);
+		if (selectedStick && !selectedStick.placed) {
+			// Second tap places if the first cell of shadow is tapped
+			if (shadowCell && shadowCell.r === finalCell.r && shadowCell.c === finalCell.c) {
+				tapPlace(finalCell.r, finalCell.c).then((placed) => {
+					if (placed) {
+						clearShadow();
+						lastTapTime = 0;
+						lastTapCell = null;
+					}
+				});
+				return;
+			}
+			// Otherwise move shadow so first cell is at tap position
+			showShadow(finalCell.r, finalCell.c);
+			lastTapTime = now;
+			lastTapCell = { r: finalCell.r, c: finalCell.c };
+			return;
+		}
+	}
+
+	// For touch events, use double-tap detection (only when no stick selected)
 		const isDoubleTap = 
 			now - lastTapTime < DOUBLE_TAP_DELAY && 
 			lastTapCell?.r === finalCell.r && 
@@ -1181,7 +1261,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.26 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.28 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -1272,17 +1352,9 @@
 								handleCellDoubleClick(r, c, e);
 							}}
 							on:touchstart={(e) => handleCellTouchStart(r, c, e)}
-							on:touchmove={(e) => {
-					handleCellTouchMove(r, c, e);
-					// Show shadow on touch move - use the cell coordinates directly
-					if (selectedSid && !dragState.isDragging) {
-						const selectedStick = sticks.find(s => s.sid === selectedSid);
-						if (selectedStick && !selectedStick.placed) {
-							// Use the actual cell r, c - not touchCell which might be wrong
-							showShadow(r, c);
-						}
-					}
-				}}
+						on:touchmove={(e) => {
+							handleCellTouchMove(r, c, e);
+						}}
 							on:touchend={(e) => handleCellTouchEnd(r, c, e)}
 							on:mouseenter={() => handleCellMouseEnter(r, c)}
 							on:mousemove={() => handleCellMouseMove(r, c)}
@@ -1296,27 +1368,28 @@
 					{/each}
 				{/each}
 
-				<!-- Shadow preview when stick is selected - shows on hover/touch -->
-				<!-- Shadows are grid children for perfect alignment -->
-				{#if selectedSid && (shadowCell || hoverCell || touchCell)}
-					{@const previewCell = shadowCell || hoverCell || touchCell}
+			<!-- Shadow preview when stick is selected -->
+			{#if selectedSid && shadowCell}
+				{@const previewCell = shadowCell}
 					{@const selectedStick = sticks.find((s) => s.sid === selectedSid)}
 					{#if selectedStick && !selectedStick.placed && previewCell}
 						{@const dr = selectedStick.orientation === 'V' ? 1 : 0}
 						{@const dc = selectedStick.orientation === 'H' ? 1 : 0}
 						{@const placementCheck = canPlaceStick(board, selectedStick, previewCell.r, previewCell.c, bag.constraints.max_intersections_per_wordpair)}
+					<div class="shadowLayer">
 						{#each Array(selectedStick.text.length) as _, i}
 							{@const shadowR = previewCell.r + dr * i}
 							{@const shadowC = previewCell.c + dc * i}
 							{#if shadowR >= 0 && shadowR < 11 && shadowC >= 0 && shadowC < 12}
 								<div 
-									class="cell shadow {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
-									style="grid-row: {shadowR + 1}; grid-column: {shadowC + 1};"
+									class="shadowOverlay {placementCheck.ok ? 'shadowValid' : 'shadowInvalid'}"
+									style="top: calc(var(--cell-size) * {shadowR}); left: calc(var(--cell-size) * {shadowC}); width: var(--cell-size); height: var(--cell-size);"
 								>
 									<span class="letter shadowLetter">{selectedStick.text[i]}</span>
 								</div>
 							{/if}
 						{/each}
+					</div>
 					{/if}
 				{/if}
 
@@ -1742,7 +1815,7 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		padding: 0;
+		padding: 4px;
 		align-items: center;
 		justify-content: center;
 		margin: 0 auto;
@@ -1757,10 +1830,10 @@
 
 	.board {
 		position: relative;
-		aspect-ratio: 12 / 11; /* 12 wide by 11 tall */
+		/* CRITICAL: Use fixed pixel cell sizes, not 1fr, to align with shadow positioning */
 		display: grid;
-		grid-template-columns: repeat(12, 1fr);
-		grid-template-rows: repeat(11, 1fr);
+		grid-template-columns: repeat(12, var(--cell-size));
+		grid-template-rows: repeat(11, var(--cell-size));
 		gap: 0;
 		overflow: visible;
 		border: 1px solid rgba(255,255,255,0.12);
@@ -1770,10 +1843,10 @@
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		/* Pure CSS sizing - screen already has padding, so use 100% of available space */
-		width: 100%;
-		max-width: 100%;
-		height: auto;
+		/* Explicit width/height set by JS, but provide sensible defaults */
+		--cell-size: 28px;
+		width: calc(var(--cell-size) * 12 + 2px);
+		height: calc(var(--cell-size) * 11 + 2px);
 	}
 
 	/* subtle grid lines */
@@ -1786,15 +1859,15 @@
 		-webkit-user-select: none;
 		touch-action: none; /* Prevent zoom/pan on cells */
 		cursor: pointer; /* show it's clickable */
-		aspect-ratio: 1 / 1; /* ensure square tiles */
+		/* Fixed size from grid - no aspect-ratio needed */
+		width: var(--cell-size);
+		height: var(--cell-size);
 		position: relative;
 		z-index: 1; /* Base z-index for regular cells */
-		transition: opacity 0.1s ease, transform 0.1s ease;
 		-webkit-tap-highlight-color: transparent; /* Remove default tap highlight */
-		/* Prevent cell from causing layout shifts */
-		contain: layout style; /* Isolate cell layout */
 		/* CRITICAL: Ensure cells are always clickable even with shadows */
 		pointer-events: auto;
+		box-sizing: border-box;
 	}
 	
 	.cell:active {
@@ -1824,28 +1897,35 @@
 		letter-spacing: 0.7px;
 	}
 
-	/* Shadow preview for drag placement - CRITICAL: Absolutely positioned overlays, NOT grid children */
-	/* This prevents shadows from affecting grid layout and causing tile movement */
-	/* Shadow cells are grid children for perfect alignment */
-	.cell.shadow {
-		position: relative;
-		z-index: 50; /* Higher than regular cells to overlay */
-		pointer-events: none; /* Don't block interactions - allow clicks through to cell */
-		opacity: 0.6; /* More subtle */
-		margin: 0;
-		padding: 0;
-		/* Shadows are rendered after regular cells, so they overlay with z-index */
-		/* CRITICAL: pointer-events: none ensures underlying cell is clickable */
+	.shadowLayer {
+		position: absolute;
+		top: 1px;
+		left: 1px;
+		right: 1px;
+		bottom: 1px;
+		pointer-events: none;
 	}
 
-	.cell.shadow.shadowValid {
+	.shadowOverlay {
+		position: absolute;
+		z-index: 50;
+		pointer-events: none;
+		opacity: 0.6;
+		display: grid;
+		place-items: center;
+		box-sizing: border-box;
+		border-right: 1px solid rgba(255,255,255,0.06);
+		border-bottom: 1px solid rgba(255,255,255,0.06);
+	}
+
+	.shadowOverlay.shadowValid {
 		outline: 1px solid rgba(132, 255, 160, 0.5); /* More subtle - reduced opacity */
 		outline-offset: -1px;
 		background: rgba(132, 255, 160, 0.1); /* More subtle background */
 		box-shadow: 0 0 2px rgba(132, 255, 160, 0.3); /* Subtle glow */
 	}
 
-	.cell.shadow.shadowInvalid {
+	.shadowOverlay.shadowInvalid {
 		outline: 1px solid rgba(255, 100, 100, 0.5); /* More subtle red */
 		outline-offset: -1px;
 		background: rgba(255, 100, 100, 0.15); /* More subtle red background */
