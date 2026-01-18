@@ -10,7 +10,7 @@
 	let bag: MorphemeBag = pickRandomBag();
 	let bagIssues: string[] = [];
 	let sticks: Stick[] = [];
-	let board: BoardState = createEmptyBoard(12, 11);
+	let board: BoardState = createEmptyBoard(11, 12);
 
 	let selectedSid: string | null = null;
 	// Use sessionStorage to remember if user dismissed quickstart
@@ -113,42 +113,48 @@
 			dictionaryLoaded = true;
 		});
 		
-		// COMPLETELY NEW APPROACH: Calculate board size from actual viewport
-		// instead of relying on flex container measurements
+		// Calculate board size from the actual screen content box
+		// This avoids flex rounding issues and prevents clipping on iOS
 		const calculateBoardSize = () => {
 			if (placementMode) return;
 			
-			// Get viewport height (use dvh-like calculation)
-			const vh = window.visualViewport?.height ?? window.innerHeight;
-			const vw = window.visualViewport?.width ?? window.innerWidth;
-			
-			// Measure actual heights of header and bank
 			const headerEl = document.querySelector('.top') as HTMLElement;
 			const bankEl = document.querySelector('.bank') as HTMLElement;
 			const boardEl = document.querySelector('.board') as HTMLElement;
+			const screenEl = document.querySelector('.screen') as HTMLElement;
 			
-			if (!headerEl || !bankEl || !boardEl) return;
+			if (!headerEl || !bankEl || !boardEl || !screenEl) return;
+			
+			const screenRect = screenEl.getBoundingClientRect();
+			const screenStyle = getComputedStyle(screenEl);
+			const paddingTop = parseFloat(screenStyle.paddingTop) || 0;
+			const paddingBottom = parseFloat(screenStyle.paddingBottom) || 0;
+			const paddingLeft = parseFloat(screenStyle.paddingLeft) || 0;
+			const paddingRight = parseFloat(screenStyle.paddingRight) || 0;
 			
 			const headerHeight = headerEl.getBoundingClientRect().height;
 			const bankHeight = bankEl.getBoundingClientRect().height;
 			
-			// Calculate available space for board with some padding
-			const padding = 20; // total vertical padding
-			const availableHeight = vh - headerHeight - bankHeight - padding;
-			const availableWidth = vw - 20; // 10px padding each side
+			const availableHeight = Math.floor(
+				screenRect.height - paddingTop - paddingBottom - headerHeight - bankHeight
+			);
+			const availableWidth = Math.floor(
+				screenRect.width - paddingLeft - paddingRight
+			);
+			
+			if (availableWidth <= 0 || availableHeight <= 0) return;
 			
 			// Board is 12 cols x 11 rows - calculate max cell size that fits
 			const border = 2; // 1px border each side
 			const maxCellFromWidth = Math.floor((availableWidth - border) / 12);
 			const maxCellFromHeight = Math.floor((availableHeight - border) / 11);
 			
-			// Use the smaller dimension to ensure board fits without clipping
-			// Subtract 2px extra margin to be safe
-			cellSize = Math.min(maxCellFromWidth, maxCellFromHeight) - 2;
+			// Use the smaller dimension so the board fits without clipping
+			cellSize = Math.min(maxCellFromWidth, maxCellFromHeight);
 			
 			// Clamp to reasonable range
-			if (cellSize < 16) cellSize = 16;
-			if (cellSize > 50) cellSize = 50;
+			if (cellSize < 12) cellSize = 12;
+			if (cellSize > 60) cellSize = 60;
 			
 			// Calculate exact board dimensions
 			const boardWidth = (cellSize * 12) + border;
@@ -302,7 +308,7 @@
 			return lenB - lenA; // Descending order
 		});
 		sticks = newSticks;
-		board = createEmptyBoard(12, 11);
+		board = createEmptyBoard(11, 12);
 		history = [];
 		redoHistory = [];
 		selectedSid = null;
@@ -519,7 +525,7 @@
 				if (cellEl) {
 					const touchR = parseInt(cellEl.dataset.r || '0');
 					const touchC = parseInt(cellEl.dataset.c || '0');
-					if (touchR >= 0 && touchR < 11 && touchC >= 0 && touchC < 12) {
+					if (touchR >= 0 && touchR < board.rows && touchC >= 0 && touchC < board.cols) {
 						finalR = touchR;
 						finalC = touchC;
 					}
@@ -722,7 +728,7 @@
 	<header class="top">
 		<div class="titleRow">
 			<div class="title">
-				<div class="h1">Cruxword <span class="bagId">(v0.28 - {bag.meta.id})</span></div>
+				<div class="h1">Cruxword <span class="bagId">(v0.29 - {bag.meta.id})</span></div>
 				<div class="tagline">A daily <strong>morpheme rush</strong> for your brain.</div>
 			</div>
 
@@ -884,9 +890,9 @@
 			<div class="bankHeader">
 				<div class="bankLabel" on:contextmenu={(e) => e.preventDefault()}>Morphemes</div>
 				<div class="bankActions">
-					<button class="iconBtn thickStroke" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-					<button class="iconBtn thickStroke" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-					<button class="iconBtn thickStroke rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
+					<button class="iconBtn thickStroke strongStroke" disabled={history.length === 0} on:click={undo} aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
+					<button class="iconBtn thickStroke strongStroke" disabled={redoHistory.length === 0} on:click={redo} aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
+					<button class="iconBtn thickStroke strongStroke rotateBtn" on:click={toggleAllStickOrientations} title="Rotate all stick orientations" style="transform: {hasHorizontalSticks ? 'rotate(0deg)' : 'rotate(90deg)'};">⟷</button>
 					<button class="iconBtn thickStroke" on:click={sortSticksByLength} title="Reverse stick order (mirror horizontally)">⇅</button>
 					<button class="iconBtn" on:click={() => {
 						showCheat = !showCheat;
@@ -1182,6 +1188,12 @@
 		font-weight: 900;
 		text-shadow: 0 0 2px rgba(233, 236, 255, 0.3);
 	}
+	
+	.iconBtn.strongStroke {
+		/* Extra stroke for thinner glyphs like ↶ ↷ ⟷ */
+		-webkit-text-stroke: 0.9px currentColor;
+		text-shadow: 0 0 3px rgba(233, 236, 255, 0.45);
+	}
 
 	.iconBtn:disabled {
 		opacity: 0.35;
@@ -1260,20 +1272,21 @@
 		position: relative;
 		/* Size set explicitly in JS to avoid clipping */
 		display: grid;
-		grid-template-columns: repeat(12, 1fr);
-		grid-template-rows: repeat(11, 1fr);
+		grid-template-columns: repeat(12, var(--cell-size));
+		grid-template-rows: repeat(11, var(--cell-size));
 		gap: 0;
-		overflow: visible;
+		overflow: hidden;
 		border: 1px solid rgba(255,255,255,0.12);
+		border-radius: 6px; /* Slightly rounded corners */
 		background:
 			radial-gradient(circle at 25% 30%, rgba(80, 120, 255, 0.15), transparent 45%),
 			radial-gradient(circle at 70% 75%, rgba(200, 140, 255, 0.12), transparent 50%),
 			linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
 		margin: 0 auto;
 		box-sizing: border-box;
-		width: auto;
-		height: auto;
 		--cell-size: 24px;
+		width: calc(var(--cell-size) * 12 + 2px);
+		height: calc(var(--cell-size) * 11 + 2px);
 	}
 
 	/* subtle grid lines */
@@ -1286,7 +1299,8 @@
 		-webkit-user-select: none;
 		touch-action: none; /* Prevent zoom/pan on cells */
 		cursor: pointer; /* show it's clickable */
-		aspect-ratio: 1 / 1; /* ensure square tiles */
+		width: var(--cell-size);
+		height: var(--cell-size);
 		position: relative;
 		z-index: 1; /* Base z-index for regular cells */
 		transition: opacity 0.1s ease, transform 0.1s ease;
@@ -1295,6 +1309,7 @@
 		contain: layout style; /* Isolate cell layout */
 		/* CRITICAL: Ensure cells are always clickable even with shadows */
 		pointer-events: auto;
+		box-sizing: border-box;
 	}
 	
 	.cell:active {
@@ -1331,6 +1346,7 @@
 		right: 1px;
 		bottom: 1px;
 		pointer-events: none;
+		border-radius: 5px;
 	}
 
 	.shadowOverlay {
