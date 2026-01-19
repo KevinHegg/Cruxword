@@ -867,20 +867,26 @@
 									<div class="cheatSectionTitle">Smartphone Touch/Tap Controls</div>
 									<ul class="cheatList">
 										<li><span class="hang">Tap</span> a morpheme stick to select it</li>
-										<li><span class="hang">Tap</span> an empty board cell to place selected stick</li>
+										<li><span class="hang">Tap</span> a board cell to show a shadow</li>
+										<li><span class="hang">Tap</span> the same cell to place the stick</li>
+										<li><span class="hang">Tap</span> a different cell to move the shadow</li>
+										<li><span class="hang">Tap</span> outside the board to clear the shadow (or wait)</li>
 										<li><span class="hang">Tap</span> a placed tile to select its stick</li>
 										<li><span class="hang">Double-tap</span> a placed stick to return it to bank</li>
 										<li><span class="hang">Double-tap</span> an intersection to disassemble cluster</li>
 										<li><span class="hang">⟷</span> button rotates all unplaced sticks</li>
 										<li><span class="hang">⇅</span> button reverses stick order (mirror horizontally)</li>
-										<li><span class="hang">Submit</span> checks legality + scores density/words</li>
+										<li><span class="hang">Submit</span> checks legality + scores clueable words</li>
 									</ul>
 								</div>
 								
 								<div class="cheatSection">
 									<div class="cheatSectionTitle">Mouse/Keyboard Controls</div>
 									<ul class="cheatList">
-										<li><span class="hang">Click</span> board cells to place selected stick</li>
+										<li><span class="hang">Click</span> a cell to show the shadow</li>
+										<li><span class="hang">Click</span> the same cell to place</li>
+										<li><span class="hang">Click</span> a different cell to move the shadow</li>
+										<li><span class="hang">Click</span> outside the board to clear the shadow</li>
 										<li><span class="hang">Click</span> placed tiles to select stick</li>
 										<li><span class="hang">Double-click</span> placed stick to return it</li>
 										<li><span class="hang">Double-click</span> intersection to disassemble</li>
@@ -891,6 +897,16 @@
 										<li><span class="hang">S</span> submit solution</li>
 										<li><span class="hang">N</span> new game</li>
 										<li><span class="hang">?</span> toggle this help</li>
+									</ul>
+								</div>
+								
+								<div class="cheatSection">
+									<div class="cheatSectionTitle">Scoring Rules</div>
+									<ul class="cheatList">
+										<li><span class="hang">Len ≥3</span> scores 1 point per tile</li>
+										<li><span class="hang">Len ≥6</span> adds Fibonacci bonus (2, 3, 5, 8, 13…)</li>
+										<li><span class="hang">Stop words</span> do not score (function words)</li>
+										<li><span class="hang">Clueable</span> words only are scored</li>
 									</ul>
 								</div>
 							</div>
@@ -1004,7 +1020,11 @@
 				<div class="modalStats">
 					<div>Score: <b>{submitResult.score}</b></div>
 					<div>Density: <b>{submitResult.densityPct}%</b></div>
-					<div>Words (≥3): <b>{submitResult.wordCount}</b></div>
+					<div>Scored words (clueable ≥3): <b>{submitResult.wordCount}</b></div>
+				</div>
+				<div class="modalNote">
+					Scoring: 1 point per tile (len ≥3) + Fibonacci bonus from len ≥6 (2, 3, 5, 8, 13…).
+					Stop words do not score.
 				</div>
 
 				{#if submitResult.issues.length}
@@ -1799,6 +1819,13 @@
 		flex-wrap: wrap;
 		font-size: 13px;
 		opacity: 0.95;
+		margin-bottom: 10px;
+	}
+	
+	.modalNote {
+		font-size: 12px;
+		line-height: 1.35;
+		opacity: 0.85;
 		margin-bottom: 10px;
 	}
 
