@@ -1,8 +1,9 @@
-// Dictionary loader for word validation
+// Dictionary loader for word validation + clueability
 let wordSet: Set<string> | null = null;
+let clueableSet: Set<string> | null = null;
 
-export async function loadDictionary(): Promise<Set<string>> {
-	if (wordSet) return wordSet;
+async function loadWordData(): Promise<void> {
+	if (wordSet && clueableSet) return;
 	
 	try {
 		// Try to load from playdict.csv
@@ -10,27 +11,47 @@ export async function loadDictionary(): Promise<Set<string>> {
 		if (!response.ok) {
 			console.warn('Could not load dictionary, using empty set');
 			wordSet = new Set();
-			return wordSet;
+			clueableSet = new Set();
+			return;
 		}
 		
 		const text = await response.text();
-		const words = text
-			.split('\n')
-			.map(line => {
-				// CSV format: word,is_clueable - extract first column
-				const parts = line.split(',');
-				return parts[0]?.trim().toUpperCase() || '';
-			})
-			.filter(word => word.length > 0 && /^[A-Z]+$/.test(word));
+		const words = new Set<string>();
+		const clueable = new Set<string>();
 		
-		wordSet = new Set(words);
-		console.log(`Loaded ${wordSet.size} words from dictionary`);
-		return wordSet;
+		const lines = text.split('\n');
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			if (trimmed.toLowerCase().startsWith('word,')) continue;
+			
+			const parts = trimmed.split(',');
+			const rawWord = parts[0]?.trim().toUpperCase() || '';
+			if (!rawWord || !/^[A-Z]+$/.test(rawWord)) continue;
+			
+			words.add(rawWord);
+			const isClueable = (parts[1] ?? '').trim().toLowerCase() === 'yes';
+			if (isClueable) clueable.add(rawWord);
+		}
+		
+		wordSet = words;
+		clueableSet = clueable;
+		console.log(`Loaded ${wordSet.size} words (${clueableSet.size} clueable) from dictionary`);
 	} catch (error) {
 		console.warn('Error loading dictionary:', error);
 		wordSet = new Set();
-		return wordSet;
+		clueableSet = new Set();
 	}
+}
+
+export async function loadDictionary(): Promise<Set<string>> {
+	await loadWordData();
+	return wordSet ?? new Set();
+}
+
+export async function loadClueableWords(): Promise<Set<string>> {
+	await loadWordData();
+	return clueableSet ?? new Set();
 }
 
 export function isValidWord(word: string, dictionary: Set<string>): boolean {

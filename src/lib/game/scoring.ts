@@ -1,12 +1,28 @@
 import type { BoardState, ValidationResult } from './types';
 
 function fibBonus(len: number): number {
-	// len 6->2, 7->3, 8->5, 9->8, 10->13
-	const map: Record<number, number> = { 6: 2, 7: 3, 8: 5, 9: 8, 10: 13 };
-	return map[len] ?? 0;
+	// Bonus starts after length 6: 7->1, 8->2, 9->3, 10->5, 11->8, 12->13
+	if (len <= 6) return 0;
+	if (len === 7) return 1;
+	if (len === 8) return 2;
+	let a = 1;
+	let b = 2;
+	for (let l = 9; l <= len; l++) {
+		const next = a + b;
+		a = b;
+		b = next;
+	}
+	return b;
 }
 
-export function validateAndScore(board: BoardState, minWordLen = 3, requireSingleCluster = true, maxIntersectionsPerWordPair = 1, dictionary?: Set<string>): ValidationResult {
+export function validateAndScore(
+	board: BoardState,
+	minWordLen = 3,
+	requireSingleCluster = true,
+	maxIntersectionsPerWordPair = 1,
+	dictionary?: Set<string>,
+	clueableWords?: Set<string>
+): ValidationResult {
 	const issues: string[] = [];
 	const rows = board.rows;
 	const cols = board.cols;
@@ -220,10 +236,20 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		}
 	}
 
+	// Filter scored words (exclude stop/functional words)
+	const scoredWords = validWords.filter((w) => {
+		if (w.len < 3) return false;
+		if (w.text.includes('*')) return false;
+		if (clueableWords && clueableWords.size > 0) {
+			return clueableWords.has(w.text);
+		}
+		return true;
+	});
+	
 	let score = 0;
-	for (const w of validWords) {
+	for (const w of scoredWords) {
 		score += w.len;
-		if (w.len >= 6) score += fibBonus(w.len);
+		score += fibBonus(w.len);
 	}
 
 	const ok = issues.length === 0;
@@ -233,7 +259,7 @@ export function validateAndScore(board: BoardState, minWordLen = 3, requireSingl
 		issues,
 		density,
 		filledCells: filled,
-		wordCount: validWords.length,
+		wordCount: scoredWords.length,
 		score,
 		words: validWords.map((w) => ({ text: w.text, dir: w.dir, row: w.row, col: w.col, len: w.len }))
 	};

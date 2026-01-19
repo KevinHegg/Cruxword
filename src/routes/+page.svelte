@@ -4,7 +4,7 @@
 	import { bagToSticks, validateBagShape } from '$lib/game/bag';
 	import { canPlaceStick, createEmptyBoard, placeStick, removeStick, rotateOrientation } from '$lib/game/board';
 	import { validateAndScore } from '$lib/game/scoring';
-	import { loadDictionary, isValidWord } from '$lib/game/dictionary';
+	import { loadClueableWords, loadDictionary, isValidWord } from '$lib/game/dictionary';
 	import type { BoardState, MorphemeBag, Stick } from '$lib/game/types';
 
 	let bag: MorphemeBag = pickRandomBag();
@@ -26,6 +26,7 @@
 	// Dictionary for word validation
 	let dictionary: Set<string> = new Set();
 	let dictionaryLoaded = false;
+	let clueableWords: Set<string> = new Set();
 
 	// Simple history for undo/redo
 	let history: BoardState[] = [];
@@ -79,7 +80,14 @@
 	$: dragCursor = selectedStick && !selectedStick.placed ? selectedStick.text[0] : null;
 	
 	// Computed: disable submit button when structure is invalid
-	$: submitValidation = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
+	$: submitValidation = validateAndScore(
+		board,
+		bag.constraints.min_word_len,
+		bag.constraints.submit_requires_single_cluster,
+		bag.constraints.max_intersections_per_wordpair,
+		dictionary,
+		clueableWords
+	);
 	$: submitDisabled = !submitValidation.ok;
 	
 	// Computed: get invalid words for highlighting
@@ -108,8 +116,9 @@
 	// ---- lifecycle
 	onMount(() => {
 		// Load dictionary asynchronously
-		loadDictionary().then((dict) => {
+		Promise.all([loadDictionary(), loadClueableWords()]).then(([dict, clueable]) => {
 			dictionary = dict;
+			clueableWords = clueable;
 			dictionaryLoaded = true;
 		});
 		
@@ -696,7 +705,14 @@
 			return;
 		}
 		
-		const res = validateAndScore(board, bag.constraints.min_word_len, bag.constraints.submit_requires_single_cluster, bag.constraints.max_intersections_per_wordpair, dictionary);
+		const res = validateAndScore(
+			board,
+			bag.constraints.min_word_len,
+			bag.constraints.submit_requires_single_cluster,
+			bag.constraints.max_intersections_per_wordpair,
+			dictionary,
+			clueableWords
+		);
 
 		submitResult = {
 			ok: res.ok,
