@@ -1,13 +1,12 @@
 import type { BoardState, ValidationResult } from './types';
 
 function fibBonus(len: number): number {
-	// Bonus starts after length 6: 7->1, 8->2, 9->3, 10->5, 11->8, 12->13
-	if (len <= 6) return 0;
-	if (len === 7) return 1;
-	if (len === 8) return 2;
+	// Bonus starts at length 6: 6->2, 7->3, 8->5, 9->8, 10->13, 11->21, 12->34
+	if (len < 6) return 0;
 	let a = 1;
 	let b = 2;
-	for (let l = 9; l <= len; l++) {
+	if (len === 6) return b;
+	for (let l = 7; l <= len; l++) {
 		const next = a + b;
 		a = b;
 		b = next;
