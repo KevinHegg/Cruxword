@@ -309,6 +309,9 @@
 	function startNewGame() {
 		bag = pickRandomBag();
 		bagIssues = validateBagShape(bag);
+		if (bagIssues.length > 0) {
+			console.log('Bag warnings (debug):', bagIssues);
+		}
 		let newSticks = bagToSticks(bag);
 		// Sort sticks by length descending (5, 4, 3, 2, 1)
 		newSticks.sort((a, b) => {
@@ -1037,15 +1040,6 @@
 
 				<button class="btnPrimary" on:click={closeSubmitModal}>Close</button>
 			</div>
-		</div>
-	{/if}
-
-	{#if bagIssues.length}
-		<div class="bagWarn">
-			<div class="bagWarnTitle">Bag warnings (safe to ignore for MVP):</div>
-			{#each bagIssues as w}
-				<div class="bagWarnItem">• {w}</div>
-			{/each}
 		</div>
 	{/if}
 </div>
@@ -1842,19 +1836,5 @@
 		line-height: 1.35;
 		opacity: 0.92;
 		margin: 4px 0;
-	}
-
-	.bagWarn {
-		margin-top: 10px;
-		font-size: 12px;
-		opacity: 0.85;
-		border: 1px dashed rgba(255,255,255,0.18);
-		border-radius: 14px;
-		padding: 10px;
-	}
-
-	.bagWarnTitle {
-		font-weight: 800;
-		margin-bottom: 6px;
 	}
 </style>

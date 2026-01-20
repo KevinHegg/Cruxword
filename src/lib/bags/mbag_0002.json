@@ -40,6 +40,9 @@
     { "sid": "s3_07", "text": "LED" },
     { "sid": "s3_08", "text": "GEM" },
     { "sid": "s3_09", "text": "ROB" },
+    { "sid": "s3_10", "text": "HEI" },
+    { "sid": "s3_11", "text": "BRE" },
+    { "sid": "s3_12", "text": "SEC" },
 
     { "sid": "s2_01", "text": "ED" },
     { "sid": "s2_02", "text": "ER" },
@@ -53,6 +56,9 @@
     { "sid": "s2_10", "text": "AN" },
     { "sid": "s2_11", "text": "GO" },
     { "sid": "s2_12", "text": "LO" },
+    { "sid": "s2_13", "text": "DE" },
+    { "sid": "s2_14", "text": "EN" },
+    { "sid": "s2_15", "text": "IM" },
 
     { "sid": "s1_01", "text": "S" },
     { "sid": "s1_02", "text": "E" },
